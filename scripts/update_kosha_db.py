@@ -17,12 +17,10 @@ URLS = [
     "https://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
     "http://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
 ]
-
 TARGET_BUSINESSES = ["건설업", "제조업", "서비스업"]
 PER_BUSINESS_LIMIT = 500
 NUM_OF_ROWS = 100
 OUTPUT_PATH = "public/data/accidents_db_lite.json"
-
 EXCLUDE_KEYWORDS = ["공공데이터 서비스", "사고예방가이드", "공지사항", "이용안내", "게시판 정보"]
 
 TEMPLATES = {
@@ -327,8 +325,7 @@ EQUIP_LIST = [
 
 
 def fetch_kosha_cases(business="", limit=500, rows=100):
-    collected = []
-    page = 1
+    collected, page = [], 1
     while len(collected) < limit:
         params = {
             "serviceKey": SERVICE_KEY,
@@ -340,7 +337,6 @@ def fetch_kosha_cases(business="", limit=500, rows=100):
             params["business"] = business
 
         data = None
-        last_err = None
         for url in URLS:
             try:
                 res = requests.get(url, params=params, timeout=25)
@@ -348,15 +344,9 @@ def fetch_kosha_cases(business="", limit=500, rows=100):
                 data = res.json()
                 break
             except Exception as e:
-                last_err = e
+                print(f"[{business}] 재시도({url[:5]}): {e}")
 
-        if data is None:
-            print(f"[{business}] {page}p 요청 실패: {last_err}")
-            break
-
-        header = data.get("header", {})
-        if str(header.get("resultCode", "")) != "00":
-            print(f"[{business}] {page}p API 오류: {header}")
+        if not data or str(data.get("header", {}).get("resultCode", "")) != "00":
             break
 
         body = data.get("body", {}) or {}
@@ -377,46 +367,30 @@ def fetch_kosha_cases(business="", limit=500, rows=100):
     return collected
 
 
-def is_valid_accident(item):
-    title = str(item.get("keyword", "")).strip()
-    contents = str(item.get("contents", "")).strip()
-    if any(k in title or k in contents for k in EXCLUDE_KEYWORDS):
-        return False
-    if len(contents) < 25 or contents == title:
-        return False
-    return True
-
-
 def clean_text(text):
     t = re.sub(r"^[‘'\"`]+", "", (text or "").strip())
     t = re.split(r"\s*\*\s*[가-힣a-zA-Z]+:", t)[0]
     return re.sub(r"\s+", " ", t).strip()
 
 
-def split_into_3_natural_lines(title, contents):
+def split_3lines(title, contents):
     c = clean_text(contents)
-    m_when_where = re.match(
+    m1 = re.match(
         r"^(.+?소재\s+[^\s]+(?:\s+[^\s]+){0,3}(?:에서|내에서|현장에서|공장에서|창고에서|사업장에서|야적장에서|농장에서|부두\s+내\s+[^\s]+에서))[,]?\s*(.+)$",
         c,
     )
-    if m_when_where:
-        part1 = m_when_where.group(1).strip().rstrip(",")
-        rest = m_when_where.group(2).strip()
-        m_mid = re.search(r"(.+?(?:작업\s*중|이동\s*중|운반\s*중|운전\s*중|과정에서|순간|하던\s*중|하다가|되어|되면서))[,]?\s*(.+)", rest)
-        if m_mid and len(m_mid.group(1)) >= 10 and len(m_mid.group(2)) >= 8:
-            return [part1, m_mid.group(1).strip().rstrip(","), m_mid.group(2).strip()]
-        words = rest.split(" ")
-        mid = max(1, len(words) // 2)
-        return [part1, " ".join(words[:mid]), " ".join(words[mid:]) or title]
-
-    words = c.split(" ")
-    if len(words) >= 6:
-        n = len(words)
-        return [
-            " ".join(words[: n // 3]),
-            " ".join(words[n // 3 : (2 * n) // 3]),
-            " ".join(words[(2 * n) // 3 :]),
-        ]
+    if m1:
+        p1, rest = m1.group(1).strip().rstrip(","), m1.group(2).strip()
+        m2 = re.search(r"(.+?(?:작업\s*중|이동\s*중|운반\s*중|운전\s*중|과정에서|순간|하던\s*중|하다가|되어|되면서))[,]?\s*(.+)", rest)
+        if m2 and len(m2.group(1)) >= 10 and len(m2.group(2)) >= 8:
+            return [p1, m2.group(1).strip().rstrip(","), m2.group(2).strip()]
+        w = rest.split(" ")
+        mid = max(1, len(w) // 2)
+        return [p1, " ".join(w[:mid]), " ".join(w[mid:]) or title]
+    w = c.split(" ")
+    if len(w) >= 6:
+        n = len(w)
+        return [" ".join(w[: n // 3]), " ".join(w[n // 3 : 2 * n // 3]), " ".join(w[2 * n // 3 :])]
     return [title, c, "작업 전 안전점검 및 핵심 방호조치 미흡으로 재해 발생"]
 
 
@@ -432,12 +406,10 @@ def detect_hazard(title, contents):
         ("질식·중독", ["질식", "중독", "산소결핍", "일산화탄소"]),
         ("부딪힘", ["부딪힘", "충돌"]),
     ]
-    for h, kws in rules:
-        if any(k in title for k in kws):
-            return h
-    for h, kws in rules:
-        if any(k in contents for k in kws):
-            return h
+    for src in (title, contents):
+        for h, kws in rules:
+            if any(k in src for k in kws):
+                return h
     return "물체에 맞음"
 
 
@@ -455,24 +427,8 @@ def select_template_key(hazard_type, full_text):
     return hazard_type if hazard_type in TEMPLATES else "맞음_낙하비래"
 
 
-def normalize_industry(b):
-    if "건설" in b:
-        return "건설현장"
-    if "제조" in b:
-        return "제조업"
-    return "서비스업"
-
-
-def detect_work_type(industry, full_text):
-    for wt, kws in WORK_TYPE_RULES[industry]:
-        if any(k in full_text for k in kws):
-            return wt
-    return WORK_TYPE_RULES[industry][0][0]
-
-
 def main():
-    all_raw = []
-    seen = set()
+    all_raw, seen = [], set()
     for biz in TARGET_BUSINESSES:
         for it in fetch_kosha_cases(biz, PER_BUSINESS_LIMIT, NUM_OF_ROWS):
             bno = str(it.get("boardno", "")).strip()
@@ -480,8 +436,89 @@ def main():
                 seen.add(bno)
                 all_raw.append(it)
 
-    templates_out = {}
-    tpl_key_to_id = {}
+    templates_out, tpl_key_to_id, lite_cases = {}, {}, []
+
+    for idx, item in enumerate(all_raw, 1):
+        title = clean_text(str(item.get("keyword", "")))
+        contents = clean_text(str(item.get("contents", "")))
+        if any(k in title or k in contents for k in EXCLUDE_KEYWORDS):
+            continue
+        if len(contents) < 25 or contents == title:
+            continue
+
+        boardno = str(item.get("boardno", f"KOSHA{idx:04d}")).strip()
+        raw_biz = str(item.get("business", "")).strip()
+        full_text = f"{title} {contents}"
+        industry = "건설현장" if "건설" in raw_biz else "제조업" if "제조" in raw_biz else "서비스업"
+        hazard_type = detect_hazard(title, contents)
+        work_type = next((wt for wt, kws in WORK_TYPE_RULES[industry] if any(k in full_text.lower() for k in kws)), WORK_TYPE_RULES[industry][0][0])
+        t_key = select_template_key(hazard_type, full_text)
+        tpl = TEMPLATES[t_key]
+
+        if t_key not in tpl_key_to_id:
+            t_id = f"T{len(templates_out) + 1:02d}"
+            tpl_key_to_id[t_key] = t_id
+            templates_out[t_id] = {
+                "preventive_measures": tpl["measures"],
+                "tbm_checklist": tpl["tbm"],
+                "ox_comparison": tpl["ox"],
+                "worker_slogan": tpl["slogan"],
+                "legal_ref": tpl["legal"],
+                "related_work_types": tpl["related"],
+                "root_causes": [
+                    "작업 전 관리감독자의 현장 안전상태 사전 점검 누락",
+                    "동종·유사 공정 위험성평가 및 5분 TBM 교육 미실시",
+                ],
+            }
+        else:
+            t_id = tpl_key_to_id[t_key]
+
+        equipment = next((e for e in EQUIP_LIST if e.replace(" ", "") in full_text.replace(" ", "")), work_type.split("·")[0])
+        prefix = {"건설현장": "CON", "제조업": "MFG", "서비스업": "SVC"}[industry]
+
+        lite_cases.append({
+            "id": f"{prefix}-KOSHA-{boardno[-8:]}",
+            "industry": industry,
+            "process": f"{raw_biz} · {work_type}",
+            "work_type": work_type,
+            "equipment": equipment,
+            "hazard_type": hazard_type,
+            "season_tag": "동절기" if any(k in contents for k in ["갈탄", "양생", "결빙", "폭설", "제설"])
+                          else "장마철" if any(k in contents for k in ["우천", "장마", "강풍", "폭우"])
+                          else "혹서기" if any(k in contents for k in ["폭염", "온열", "열사병"])
+                          else "상시",
+            "severity": "사망" if any(k in contents for k in ["사망", "숨"]) else "중대재해",
+            "title": title,
+            "source_ref": f"안전보건공단 국내재해사례 오픈API ({boardno})",
+            "summary_3lines": split_3lines(title, contents),
+            "direct_causes": [
+                f"{equipment} 작업 시 핵심 {hazard_type} 방호조치 미흡",
+                "작업 전 위험요인 확인 및 안전작업절차 미준수",
+                "위험구역 출입 통제 또는 전용 보호구 착용 미흡",
+            ],
+            "keywords": list({industry, hazard_type, equipment, work_type.split("·")[0]}),
+            "t": t_id,
+        })
+
+    if not lite_cases:
+        print("ERROR: 유효 사례가 0건입니다.")
+        sys.exit(1)
+
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    payload = {
+        "format": "kosha-lite-v1",
+        "updated_at": time.strftime("%Y-%m-%d"),
+        "templates": templates_out,
+        "cases": lite_cases,
+    }
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+
+    size_kb = os.path.getsize(OUTPUT_PATH) / 1024
+    print(f"저장 완료: {len(lite_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(OUTPUT_PATH)}")
+    print("업종별 분포:", dict(Counter(x["industry"] for x in lite_cases)))
+
 
 if __name__ == "__main__":
     main()
+# === END OF FILE ===
