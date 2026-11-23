@@ -501,8 +501,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               <Database className="w-3.5 h-3.5 text-slate-500" />
               <span>사고사례 JSON DB 확장</span>
             </span>
-            <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
-              총 {totalDbCount}건{customDbCount > 0 ? ` (추가 ${customDbCount}건)` : ''}
+            <span className="text-[11px] font-semibold text-slate-600 tabular-nums">
+              총 {totalDbCount.toLocaleString('ko-KR')}건
+              {customDbCount > 0 ? ` (추가 ${customDbCount.toLocaleString('ko-KR')}건)` : ''}
             </span>
           </div>
 

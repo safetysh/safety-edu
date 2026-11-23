@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Image as ImageIcon,
@@ -22,6 +22,7 @@ import {
 import {
   GenerationHistoryState,
   generateEducationMaterial,
+  parseCasesData,
   parseUploadedCasesJson,
 } from './engine/generator';
 import { ControlSidebar } from './components/ControlSidebar';
@@ -90,6 +91,79 @@ export default function App() {
 
   const [material, setMaterial] = useState<GeneratedMaterial>(initialGen.material);
   const [history, setHistory] = useState<GenerationHistoryState>(initialGen.nextHistory);
+
+  const selectionRef = useRef({
+    industry,
+    workType,
+    variationOption,
+    includeCrossProcess: siteInfo.includeCrossProcess,
+  });
+  selectionRef.current = {
+    industry,
+    workType,
+    variationOption,
+    includeCrossProcess: siteInfo.includeCrossProcess,
+  };
+
+  // Auto-load static KOSHA DB JSON on initial mount (Zero External API — pure static asset)
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadStaticKoshaDb() {
+      try {
+        const dbUrl = `${import.meta.env.BASE_URL}data/accidents_db_lite.json`;
+        const response = await fetch(dbUrl, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+
+        const rawText = await response.text();
+        // Guard against SPA HTML fallback when static file does not exist yet
+        if (!rawText.trim() || rawText.trimStart().startsWith('<')) return;
+
+        const parsedJson = JSON.parse(rawText);
+        const { cases: hydratedCases } = parseCasesData(parsedJson, 'builtin');
+        if (cancelled || hydratedCases.length === 0) return;
+
+        setCasesDb((prevDb) => {
+          // Replace built-in seed 10 cases with loaded KOSHA DB, preserving any user-uploaded custom cases
+          const customUploaded = prevDb.filter((c) => c.source === 'custom');
+          if (customUploaded.length === 0) return hydratedCases;
+          const mergedMap = new Map<string, AccidentCase>();
+          for (const item of hydratedCases) mergedMap.set(item.id, item);
+          for (const item of customUploaded) mergedMap.set(item.id, item);
+          return Array.from(mergedMap.values());
+        });
+
+        const currentSel = selectionRef.current;
+        const fresh = generateEducationMaterial({
+          allCases: hydratedCases,
+          industry: currentSel.industry,
+          workType: currentSel.workType,
+          variationOption: currentSel.variationOption,
+          includeCrossProcess: currentSel.includeCrossProcess,
+          history: { version: 0 },
+          isRegenerate: false,
+        });
+
+        if (!cancelled) {
+          setMaterial(fresh.material);
+          setHistory(fresh.nextHistory);
+        }
+      } catch {
+        // Silently retain built-in 10 seed cases on network/404/parse fallback
+      }
+    }
+
+    loadStaticKoshaDb();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, []);
 
   const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message });
@@ -263,7 +337,7 @@ export default function App() {
 
       showToast(
         'success',
-        `${parsedCases.length}건의 사고사례가 내장 DB에 병합되었습니다. (총 ${nextDb.length}건)`
+        `${parsedCases.length.toLocaleString('ko-KR')}건의 사고사례가 내장 DB에 병합되었습니다. (총 ${nextDb.length.toLocaleString('ko-KR')}건)`
       );
     } catch {
       showToast('error', '파일을 읽는 중 오류가 발생했습니다.');
