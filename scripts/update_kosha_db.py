@@ -482,3 +482,6 @@ def main():
 
     templates_out = {}
     tpl_key_to_id = {}
+
+if __name__ == "__main__":
+    main()
