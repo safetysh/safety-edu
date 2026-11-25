@@ -1,28 +1,64 @@
-import { toPng } from 'html-to-image';
-import JSZip from 'jszip';
 import { AccidentCase } from '../types/safety';
 
 function sanitizeName(text: string): string {
   return text.replace(/[\\/:*?"<>|\s·]+/g, '_').replace(/_+/g, '_').slice(0, 40);
 }
 
-async function captureNodeDataUrl(node: HTMLElement, targetPixelWidth?: number): Promise<string> {
-  const computedRatio =
-    targetPixelWidth && node.offsetWidth > 0
-      ? Math.max(1.5, targetPixelWidth / node.offsetWidth)
-      : 2;
+let cachedFontEmbedCSSPromise: Promise<string | undefined> | null = null;
+
+async function getCachedFontEmbedCSS(
+  node: HTMLElement,
+  getFontEmbedCSS: typeof import('html-to-image').getFontEmbedCSS
+): Promise<string | undefined> {
+  if (!cachedFontEmbedCSSPromise) {
+    const rootTarget = document.body ?? node;
+    cachedFontEmbedCSSPromise = getFontEmbedCSS(rootTarget).catch(() => {
+      cachedFontEmbedCSSPromise = null;
+      return undefined;
+    });
+  }
+  return cachedFontEmbedCSSPromise;
+}
+
+async function captureNodeDataUrl(
+  node: HTMLElement,
+  targetPixelWidth?: number
+): Promise<string> {
+  const { toPng, getFontEmbedCSS } = await import('html-to-image');
+
+  const rectWidth = node.offsetWidth || node.clientWidth;
+  const rectHeight = node.offsetHeight || node.clientHeight;
+
+  const hasExactTarget =
+    typeof targetPixelWidth === 'number' &&
+    targetPixelWidth > 0 &&
+    rectWidth > 0 &&
+    rectHeight > 0;
+
+  const sizeOptions = hasExactTarget
+    ? {
+        canvasWidth: Math.round(targetPixelWidth),
+        canvasHeight: Math.round((targetPixelWidth * rectHeight) / rectWidth),
+        pixelRatio: 1,
+      }
+    : {
+        pixelRatio: 2,
+      };
+
+  const fontEmbedCSS = await getCachedFontEmbedCSS(node, getFontEmbedCSS);
 
   try {
     return await toPng(node, {
       cacheBust: true,
-      pixelRatio: computedRatio,
       backgroundColor: '#ffffff',
+      ...sizeOptions,
+      ...(fontEmbedCSS !== undefined ? { fontEmbedCSS } : {}),
     });
   } catch {
     return await toPng(node, {
       cacheBust: true,
-      pixelRatio: computedRatio,
       backgroundColor: '#ffffff',
+      ...sizeOptions,
       skipFonts: true,
     });
   }
@@ -35,6 +71,119 @@ function triggerDownload(href: string, fileName: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('파일 데이터를 읽을 수 없습니다.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('파일 읽기 중 오류가 발생했습니다.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function parseSvgIntrinsicSize(svgText: string): { width: number; height: number } | null {
+  const viewBoxMatch = svgText.match(/viewBox\s*=\s*["']\s*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*["']/i);
+  if (viewBoxMatch) {
+    const w = parseFloat(viewBoxMatch[3]);
+    const h = parseFloat(viewBoxMatch[4]);
+    if (w > 0 && h > 0) return { width: w, height: h };
+  }
+  const wMatch = svgText.match(/\bwidth\s*=\s*["']\s*([\d.]+)(?:px)?\s*["']/i);
+  const hMatch = svgText.match(/\bheight\s*=\s*["']\s*([\d.]+)(?:px)?\s*["']/i);
+  if (wMatch && hMatch) {
+    const w = parseFloat(wMatch[1]);
+    const h = parseFloat(hMatch[1]);
+    if (w > 0 && h > 0) return { width: w, height: h };
+  }
+  return null;
+}
+
+/**
+ * Normalizes uploaded company/site logo images for universal compatibility across
+ * HTML preview, high-res PNG capture, A4 print, and client-side PptxGenJS (.pptx) export.
+ * Converts SVG and WebP logos to high-resolution transparent PNG via offscreen Canvas.
+ */
+export async function normalizeLogoFileToDataUrl(
+  file: File
+): Promise<{ dataUrl: string; convertedToPng: boolean }> {
+  const mime = (file.type || '').toLowerCase();
+  const lowerName = file.name.toLowerCase();
+  const isSvg = mime === 'image/svg+xml' || lowerName.endsWith('.svg');
+  const isWebp = mime === 'image/webp' || lowerName.endsWith('.webp');
+
+  if (!isSvg && !isWebp) {
+    const dataUrl = await readFileAsDataUrl(file);
+    return { dataUrl, convertedToPng: false };
+  }
+
+  let objectUrl = '';
+  let svgHintSize: { width: number; height: number } | null = null;
+
+  if (isSvg) {
+    const rawSvg = await file.text();
+    svgHintSize = parseSvgIntrinsicSize(rawSvg);
+    let normalizedSvg = rawSvg;
+    if (svgHintSize && !/\bwidth\s*=/i.test(rawSvg.split('>')[0] || '')) {
+      normalizedSvg = rawSvg.replace(
+        /<svg\b/i,
+        `<svg width="${svgHintSize.width}" height="${svgHintSize.height}"`
+      );
+    }
+    const svgBlob = new Blob([normalizedSvg], { type: 'image/svg+xml;charset=utf-8' });
+    objectUrl = URL.createObjectURL(svgBlob);
+  } else {
+    objectUrl = URL.createObjectURL(file);
+  }
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.decoding = 'async';
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('로고 이미지를 디코딩할 수 없습니다.'));
+      el.src = objectUrl;
+    });
+
+    const baseW = img.naturalWidth || svgHintSize?.width || 400;
+    const baseH = img.naturalHeight || svgHintSize?.height || 160;
+    const maxEdge = Math.max(baseW, baseH, 1);
+
+    // Target crisp high-res output (minimum 800px longest side for vector/small logos, capped at 1200px)
+    const targetLongest = Math.min(1200, Math.max(800, maxEdge * 2));
+    const scale = targetLongest / maxEdge;
+    const targetW = Math.max(1, Math.round(baseW * scale));
+    const targetH = Math.max(1, Math.round(baseH * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas 2D 컨텍스트를 생성할 수 없습니다.');
+    }
+
+    ctx.clearRect(0, 0, targetW, targetH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    return {
+      dataUrl: canvas.toDataURL('image/png'),
+      convertedToPng: true,
+    };
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
 }
 
 /**
@@ -60,6 +209,7 @@ export async function downloadCardNewsZip(
   workType: string,
   dateStr: string
 ): Promise<string> {
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
 
   for (let i = 0; i < nodes.length; i++) {

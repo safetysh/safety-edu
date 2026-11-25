@@ -391,12 +391,12 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               {/* Company / Site Logo Upload */}
               <div className="space-y-1.5">
                 <span className="block text-[11px] font-semibold text-slate-600">
-                  회사·현장 로고 이미지 (PNG/JPG)
+                  회사·현장 로고 이미지 (PNG/JPG/SVG/WebP)
                 </span>
                 <input
                   ref={logoInputRef}
                   type="file"
-                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.webp"
                   onChange={handleLogoChange}
                   className="hidden"
                 />
@@ -428,7 +428,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     className="w-full py-2 px-3 rounded-md border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <ImagePlus className="w-3.5 h-3.5 shrink-0" />
-                    <span>로고 PNG 업로드 (포스터·슬라이드 하단 자동 배치)</span>
+                    <span>로고 업로드 (SVG·WebP 투명 PNG 자동 변환)</span>
                   </button>
                 )}
               </div>

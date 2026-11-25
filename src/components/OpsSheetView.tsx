@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Eye,
   EyeOff,
@@ -22,6 +22,8 @@ import { SEASONAL_RISKS } from '../data/seasonalRisks';
 interface OpsSheetViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
+  showKytAnswers?: boolean;
+  onToggleKytAnswers?: () => void;
   sheetRef?: React.RefObject<HTMLDivElement | null>;
   isPrintClone?: boolean;
 }
@@ -29,10 +31,11 @@ interface OpsSheetViewProps {
 export const OpsSheetView: React.FC<OpsSheetViewProps> = ({
   material,
   siteInfo,
+  showKytAnswers = true,
+  onToggleKytAnswers,
   sheetRef,
   isPrintClone = false,
 }) => {
-  const [showKytAnswers, setShowKytAnswers] = useState(true);
   const { primaryCase: c, relatedCase, theme, perspectiveMode, layoutStyle, isExactMatch } = material;
 
   const siteLabel = siteInfo.siteName.trim() || '________________';
@@ -160,7 +163,6 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = ({
       }
 
       if (perspectiveMode === 'kyt_quiz') {
-        const reveal = isPrintClone ? true : showKytAnswers;
         return (
           <div
             className={`rounded-md border ${ultraDense ? 'p-2' : 'p-2.5'}`}
@@ -173,10 +175,10 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = ({
               >
                 현장 위험예지(KYT) 토의 질문
               </p>
-              {!isPrintClone && (
+              {!isPrintClone && onToggleKytAnswers && (
                 <button
                   type="button"
-                  onClick={() => setShowKytAnswers((prev) => !prev)}
+                  onClick={onToggleKytAnswers}
                   className="no-print inline-flex items-center gap-1 text-[10px] font-semibold text-slate-700 hover:text-slate-950 transition-colors cursor-pointer"
                 >
                   {showKytAnswers ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
@@ -187,7 +189,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = ({
             <p className="text-[11.2px] font-bold text-slate-900 leading-snug keep-all mb-1.5">
               Q. {c.kyt_quiz.question}
             </p>
-            {reveal ? (
+            {showKytAnswers ? (
               <div className="grid grid-cols-3 gap-1.5 border-t pt-1.5" style={{ borderColor: theme.borderHex }}>
                 {c.kyt_quiz.answers.map((ans, idx) => (
                   <div
@@ -205,8 +207,23 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="border border-dashed border-slate-400/70 rounded bg-white/80 px-3 py-2 text-center text-[10.5px] text-slate-600">
-                근로자와 함께 3가지 핵심 위험요인을 토의한 뒤 “모범 정답 보기”를 눌러 확인하세요.
+              <div className="grid grid-cols-3 gap-1.5 border-t pt-1.5" style={{ borderColor: theme.borderHex }}>
+                {[1, 2, 3].map((num) => (
+                  <div
+                    key={num}
+                    className="rounded bg-white/95 border border-dashed border-slate-400 px-2 py-2 flex items-center gap-1.5 text-[10px] text-slate-500 leading-snug keep-all"
+                  >
+                    <span
+                      className="shrink-0 w-3.5 h-3.5 rounded-sm text-white text-[9px] font-bold flex items-center justify-center tabular-nums"
+                      style={{ backgroundColor: theme.primaryHex }}
+                    >
+                      {num}
+                    </span>
+                    <span className="flex-1 border-b border-dotted border-slate-400 pb-0.5 text-[9.6px] text-slate-500">
+                      토의 기록:
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

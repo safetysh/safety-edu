@@ -10,6 +10,10 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   update-and-deploy:
     environment:
@@ -39,6 +43,7 @@ jobs:
           git add -f public/data/accidents_db_lite.json
           if ! git diff --staged --quiet; then
             git commit -m "chore: 공단 국내재해사례 DB 자동 업데이트"
+            git pull --rebase
             git push
           fi
 

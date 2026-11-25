@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -24,6 +24,8 @@ interface SlideDeckViewProps {
   siteInfo: CustomSiteInfo;
   activeSlide: number;
   onChangeSlide: (index: number) => void;
+  showKytAnswers: boolean;
+  onToggleKytAnswers: () => void;
   slideRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -40,9 +42,10 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
   siteInfo,
   activeSlide,
   onChangeSlide,
+  showKytAnswers,
+  onToggleKytAnswers,
   slideRef,
 }) => {
-  const [showKytAnswers, setShowKytAnswers] = useState(true);
   const { primaryCase: c, relatedCase, theme, isExactMatch, perspectiveMode } = material;
 
   const siteLabel = siteInfo.siteName.trim() || '________________';
@@ -490,7 +493,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                 <span>현장 위험예지(KYT) 퀴즈</span>
                 <button
                   type="button"
-                  onClick={() => setShowKytAnswers((p) => !p)}
+                  onClick={onToggleKytAnswers}
                   className="no-print inline-flex items-center gap-1 text-[10px] bg-black/20 hover:bg-black/30 px-2 py-0.5 rounded transition-colors cursor-pointer"
                 >
                   {showKytAnswers ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}

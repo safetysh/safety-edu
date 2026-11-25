@@ -3,16 +3,10 @@ import re
 import sys
 import time
 import json
-import requests
+import argparse
 from collections import Counter
 from urllib.parse import unquote
 
-RAW_KEY = os.environ.get("KOSHA_API_KEY", "").strip()
-if not RAW_KEY:
-    print("ERROR: KOSHA_API_KEY 시크릿이 설정되지 않았습니다.")
-    sys.exit(1)
-
-SERVICE_KEY = unquote(RAW_KEY)
 URLS = [
     "https://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
     "http://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
@@ -22,6 +16,9 @@ PER_BUSINESS_LIMIT = 500
 NUM_OF_ROWS = 100
 OUTPUT_PATH = "public/data/accidents_db_lite.json"
 EXCLUDE_KEYWORDS = ["공공데이터 서비스", "사고예방가이드", "공지사항", "이용안내", "게시판 정보"]
+
+TITLE_SCORE_WEIGHT = 2.5
+BODY_SCORE_WEIGHT = 1.0
 
 TEMPLATES = {
     "떨어짐": {
@@ -290,81 +287,284 @@ TEMPLATES = {
     },
 }
 
-WORK_TYPE_RULES = {
+# Domain scoring rules: each entry is (work_type, [(keyword, domain_weight), ...]).
+# Title matches receive TITLE_SCORE_WEIGHT (2.5x) and body matches receive BODY_SCORE_WEIGHT (1.0x).
+WORK_TYPE_DOMAIN_RULES = {
     "건설현장": [
-        ("이동식 비계·사다리 작업", ["이동식 비계", "시스템 비계", "시스템비계", "달비계", "사다리", "말비계", "비계"]),
-        ("굴착·가시설 토목 작업", ["굴착", "토사", "매몰", "흙막이", "거푸집", "알폼", "동바리", "관로", "되메우기"]),
-        ("철골·지붕 고소 작업", ["지붕", "채광창", "선라이트", "슬레이트", "철골", "데크플레이트", "캐노피", "창호", "외벽", "고소작업대", "고소작업차"]),
-        ("타워크레인·양중 작업", ["크레인", "양중", "인양", "슬링", "호이스트", "지게차", "리프트", "크램쉘"]),
-        ("밀폐공간·양생 작업", ["밀폐", "양생", "갈탄", "맨홀", "정화조", "질식", "용접", "화재"]),
+        (
+            "이동식 비계·사다리 작업",
+            [
+                ("이동식 비계", 3.0), ("시스템 비계", 3.0), ("강관비계", 2.8), ("외부비계", 2.8),
+                ("달비계", 3.0), ("말비계", 3.0), ("이동식 사다리", 3.0), ("A형 사다리", 3.0),
+                ("비계", 2.2), ("사다리", 2.4), ("작업발판", 1.8), ("우마", 2.2),
+            ],
+        ),
+        (
+            "굴착·가시설 토목 작업",
+            [
+                ("굴착기", 2.4), ("굴착", 2.8), ("토사", 2.6), ("매몰", 2.8), ("흙막이", 3.0),
+                ("지보공", 2.8), ("거푸집", 2.6), ("알폼", 2.8), ("갱폼", 2.8), ("동바리", 2.8),
+                ("관로", 2.4), ("되메우기", 2.8), ("사면", 2.2), ("옹벽", 2.4), ("석축", 2.4),
+                ("기초공사", 2.2), ("토목", 2.0), ("항타기", 2.6), ("파일", 2.0), ("크램쉘", 2.6),
+                ("롤러", 1.8), ("다짐", 1.8), ("불도저", 2.4), ("덤프트럭", 2.0),
+            ],
+        ),
+        (
+            "철골·지붕 고소 작업",
+            [
+                ("지붕", 2.8), ("채광창", 3.0), ("선라이트", 3.0), ("슬레이트", 2.8),
+                ("철골", 2.8), ("데크플레이트", 3.0), ("트러스", 2.6), ("캐노피", 2.6),
+                ("창호", 2.4), ("외벽", 2.4), ("고소작업대", 2.8), ("고소작업차", 2.8),
+                ("스카이차", 2.6), ("개구부", 2.2), ("슬래브", 2.0), ("발코니", 2.2),
+                ("옥상", 2.2), ("천장", 1.8), ("거더", 2.4), ("교량", 2.0),
+            ],
+        ),
+        (
+            "타워크레인·양중 작업",
+            [
+                ("타워크레인", 3.2), ("이동식 크레인", 3.0), ("크레인", 2.6), ("양중", 2.8),
+                ("인양", 2.6), ("슬링벨트", 2.8), ("슬링", 2.4), ("와이어로프", 2.6),
+                ("호이스트", 2.8), ("건설용 리프트", 3.0), ("리프트", 2.4), ("윈치", 2.4),
+                ("달기구", 2.6), ("줄걸이", 2.6), ("지게차", 2.4), ("펌프카", 2.6),
+                ("믹서트럭", 2.2), ("레미콘", 2.0), ("하역", 2.2), ("상차", 2.0), ("하차", 2.0),
+            ],
+        ),
+        (
+            "밀폐공간·양생 작업",
+            [
+                ("밀폐공간", 3.2), ("밀폐", 2.8), ("양생", 3.0), ("갈탄", 3.2), ("열풍기", 2.6),
+                ("일산화탄소", 3.0), ("산소결핍", 3.0), ("황화수소", 3.0), ("맨홀", 2.8),
+                ("정화조", 2.8), ("집수정", 2.8), ("저수조", 2.8), ("피트", 2.2),
+                ("질식", 2.8), ("중독", 2.6), ("방수", 2.2), ("도장", 2.0), ("유기용제", 2.6),
+                ("신너", 2.6), ("용접", 2.2), ("용단", 2.2), ("화재", 2.0), ("폭발", 2.2),
+            ],
+        ),
     ],
     "제조업": [
-        ("컨베이어·회전체 점검/청소", ["컨베이어", "회전체", "롤러", "롤에", "로봇", "차단문", "분쇄", "선별기", "청소", "이물질"]),
-        ("프레스·절곡·전단기 작업", ["프레스", "절곡", "전단", "사출", "성형", "가공기", "볼밀"]),
-        ("지게차·물류 하역 작업", ["지게차", "하역", "적재", "하적단", "톤백", "대차", "컨테이너", "트레일러", "크레인", "운반"]),
-        ("고소작업대·설비 보수", ["고소작업대", "사다리", "지붕", "플랫폼", "작업발판", "배관", "리프트", "실린더", "설비", "점검", "정비"]),
-        ("화학물질·밀폐탱크 작업", ["탱크", "화학", "응축수", "희석제", "신너", "화상", "화재", "폭발", "질식", "밀폐"]),
+        (
+            "컨베이어·회전체 점검/청소",
+            [
+                ("컨베이어", 3.0), ("회전체", 3.0), ("회전기계", 3.0), ("롤러", 2.6),
+                ("롤에", 2.6), ("교반기", 2.8), ("혼합기", 2.8), ("배합기", 2.8),
+                ("분쇄기", 2.8), ("파쇄기", 2.8), ("분쇄", 2.4), ("선별기", 2.8),
+                ("스크류", 2.6), ("체인", 2.0), ("기어", 2.2), ("구동부", 2.4),
+                ("산업용 로봇", 3.0), ("로봇", 2.6), ("차단문", 2.4), ("원심분리기", 2.8),
+                ("초지", 2.4), ("압연", 2.4), ("권취기", 2.6), ("이물질 제거", 2.2), ("말림", 2.2),
+            ],
+        ),
+        (
+            "프레스·절곡·전단기 작업",
+            [
+                ("프레스", 3.2), ("절곡기", 3.2), ("절곡", 2.8), ("전단기", 3.2), ("전단", 2.6),
+                ("사출성형기", 3.0), ("사출기", 3.0), ("사출", 2.6), ("성형기", 2.8),
+                ("금형", 2.8), ("선반", 2.6), ("밀링", 2.8), ("보링", 2.8), ("머시닝센터", 2.8),
+                ("드릴기", 2.8), ("천공기", 2.6), ("천공", 2.2), ("절단기", 2.6), ("톱기계", 2.8),
+                ("연삭기", 2.8), ("그라인더", 2.6), ("가공기", 2.6), ("단조", 2.6), ("볼밀", 2.6),
+            ],
+        ),
+        (
+            "지게차·물류 하역 작업",
+            [
+                ("지게차", 3.2), ("하역", 2.8), ("상하차", 2.8), ("상차", 2.4), ("하차", 2.4),
+                ("하적단", 3.0), ("적재", 2.2), ("적치", 2.0), ("톤백", 2.8), ("파렛트", 2.6),
+                ("팔레트", 2.6), ("대차", 2.6), ("컨테이너", 2.4), ("트레일러", 2.6),
+                ("화물자동차", 2.6), ("화물차", 2.4), ("천장크레인", 2.8), ("호이스트", 2.6),
+                ("크레인", 2.4), ("인양", 2.2), ("슬링", 2.2), ("운반", 2.0), ("입고", 2.0), ("출고", 2.0),
+            ],
+        ),
+        (
+            "고소작업대·설비 보수",
+            [
+                ("고소작업대", 3.2), ("시저형", 2.8), ("이동식 사다리", 3.0), ("A형 사다리", 3.0),
+                ("사다리", 2.6), ("지붕", 2.8), ("채광창", 3.0), ("선라이트", 3.0),
+                ("플랫폼", 2.4), ("작업발판", 2.4), ("개구부", 2.4), ("비계", 2.4),
+                ("리프트", 2.4), ("승강기", 2.4), ("천장조명", 2.8), ("조명", 2.2),
+                ("실린더", 2.4), ("배관", 2.0), ("변압기", 2.6), ("분전반", 2.6),
+                ("전선", 2.2), ("감전", 2.4), ("보수", 1.8), ("수리", 1.8), ("교체", 1.6),
+            ],
+        ),
+        (
+            "화학물질·밀폐탱크 작업",
+            [
+                ("저장탱크", 3.2), ("밀폐탱크", 3.2), ("탱크", 2.8), ("반응기", 3.0),
+                ("화학설비", 3.2), ("화학물질", 3.0), ("유해화학", 3.0), ("화학", 2.4),
+                ("응축수", 3.0), ("스팀", 2.4), ("용광로", 2.8), ("전기로", 2.8), ("용융물", 2.8),
+                ("희석제", 3.0), ("신너", 3.0), ("유기용제", 3.0), ("인화성", 2.8),
+                ("플랜지", 2.6), ("집진기", 2.6), ("세척", 2.2), ("도장", 2.0),
+                ("산소결핍", 3.0), ("일산화탄소", 3.0), ("황화수소", 3.0), ("질식", 3.0),
+                ("중독", 2.8), ("밀폐", 2.8), ("누출", 2.4), ("화상", 2.6), ("화재", 2.4), ("폭발", 2.6),
+            ],
+        ),
     ],
     "서비스업": [
-        ("물류창고 상하차·지게차 작업", ["물류", "창고", "상하차", "상차", "하역", "지게차", "화물", "피킹", "선적", "컨테이너"]),
-        ("건물 시설관리·조명 교체", ["조명", "시설관리", "사다리", "고소작업대", "엘리베이터", "승강기", "저수조", "배기", "소방배관", "통신케이블", "감전", "벌목", "가지치기"]),
-        ("폐기물 파쇄·압축기 작업", ["폐기물", "쓰레기", "재활용", "파쇄", "압축", "고철", "세차기", "청소차"]),
-        ("주방·조리실 화상/절단 작업", ["주방", "조리", "음식점", "절단", "화상"]),
-        ("배달·이륜차 운행 작업", ["배달", "이륜차", "오토바이", "견인", "화물차"]),
+        (
+            "물류창고 상하차·지게차 작업",
+            [
+                ("물류창고", 3.2), ("물류센터", 3.2), ("물류", 2.6), ("창고", 2.4),
+                ("상하차", 3.0), ("상차", 2.4), ("하차", 2.4), ("하역", 2.8),
+                ("지게차", 3.2), ("오더피커", 3.2), ("리치스태커", 3.0), ("파렛트", 2.6),
+                ("팔레트", 2.6), ("피킹", 2.8), ("적재대", 2.6), ("컨테이너", 2.4),
+                ("선적", 2.6), ("부두", 2.4), ("항만", 2.4), ("계선", 2.4), ("톤백", 2.6), ("대차", 2.4),
+            ],
+        ),
+        (
+            "건물 시설관리·조명 교체",
+            [
+                ("조명", 3.0), ("시설관리", 3.0), ("빌딩", 2.4), ("아파트", 2.4), ("건물", 2.0),
+                ("지붕", 2.6), ("채광창", 2.8), ("천장", 2.4), ("외벽", 2.4), ("옥상", 2.4),
+                ("실외기", 3.0), ("에어컨", 2.8), ("배기", 2.6), ("공조기", 2.8), ("보일러", 2.6),
+                ("엘리베이터", 3.2), ("승강기", 3.2), ("기계식주차", 3.0), ("주차설비", 3.0),
+                ("사다리", 2.8), ("고소작업대", 2.8), ("이동식비계", 2.8), ("비계", 2.4),
+                ("저수조", 3.0), ("정화조", 3.0), ("맨홀", 2.8), ("소방배관", 3.0), ("배관", 2.4),
+                ("통신케이블", 3.0), ("전신주", 2.8), ("변압기", 2.8), ("분전반", 2.8), ("감전", 2.6),
+                ("벌목", 2.8), ("벌도목", 3.0), ("임목", 2.8), ("수목", 2.8), ("가지치기", 3.0),
+                ("전지작업", 3.0), ("전지", 2.6), ("예초기", 2.8), ("조경", 2.6), ("화단", 2.4), ("경비원", 2.4),
+            ],
+        ),
+        (
+            "폐기물 파쇄·압축기 작업",
+            [
+                ("폐기물", 3.2), ("쓰레기", 3.0), ("재활용", 3.0), ("파쇄기", 3.2), ("파쇄", 2.8),
+                ("압축기", 3.2), ("압축", 2.6), ("분쇄기", 2.8), ("선별기", 2.8), ("컨베이어", 2.6),
+                ("고철", 2.8), ("집게차", 3.0), ("암롤", 3.0), ("청소차", 3.0), ("수집차", 3.0),
+                ("자동세차기", 2.8), ("세차기", 2.8), ("혼합기", 2.6), ("우드칩", 2.6),
+                ("퇴비", 2.4), ("분뇨", 2.4), ("스키드로더", 2.6),
+            ],
+        ),
+        (
+            "주방·조리실 화상/절단 작업",
+            [
+                ("주방", 3.2), ("조리실", 3.2), ("조리", 3.0), ("음식점", 3.0), ("식당", 2.8),
+                ("급식", 3.0), ("국솥", 3.2), ("튀김기", 3.2), ("열매체유", 3.0), ("육절기", 3.2),
+                ("반죽기", 3.0), ("민서기", 3.0), ("절단기", 2.4), ("식품", 2.2), ("화상", 2.6),
+            ],
+        ),
+        (
+            "배달·이륜차 운행 작업",
+            [
+                ("배달", 3.2), ("택배", 3.0), ("배송", 3.0), ("우편", 2.8), ("이륜차", 3.2),
+                ("오토바이", 3.2), ("사륜차", 2.8), ("견인", 3.0), ("구난차", 3.0),
+                ("화물자동차", 2.4), ("화물차", 2.2), ("탑차", 2.6), ("운전석", 2.4),
+                ("주행", 2.4), ("운행", 2.4), ("교차로", 2.4), ("도로", 2.0),
+            ],
+        ),
     ],
 }
 
-EQUIP_LIST = [
-    "차량탑재형 고소작업대", "시저형 고소작업대", "고소작업대", "시스템 비계", "이동식 비계", "달비계",
-    "A형 사다리", "이동식 사다리", "사다리", "채광창", "선라이트", "데크플레이트", "거푸집", "알폼",
-    "크램쉘 버킷", "굴착기", "천장크레인", "타워크레인", "이동식 크레인", "크레인", "지게차", "리치스태커",
-    "벨트 컨베이어", "셔틀컨베이어", "컨베이어", "산업용 로봇", "유압 성형 프레스", "프레스", "분쇄선별기",
-    "볼밀", "저장탱크", "산업용 리프트", "엘리베이터", "승강기", "청소차", "화물자동차", "톤백", "대차",
-    "자동세차기", "윈치", "변압기", "덤프트럭", "믹서트럭", "펌프카", "예초기", "기계톱",
-]
+# Hazard-type fallback classifier when domain keyword score is 0
+HAZARD_WORK_TYPE_FALLBACK = {
+    "건설현장": {
+        "떨어짐": "철골·지붕 고소 작업",
+        "붕괴·무너짐": "굴착·가시설 토목 작업",
+        "깔림·뒤집힘": "타워크레인·양중 작업",
+        "물체에 맞음": "타워크레인·양중 작업",
+        "끼임": "타워크레인·양중 작업",
+        "부딪힘": "굴착·가시설 토목 작업",
+        "화재·폭발": "밀폐공간·양생 작업",
+        "질식·중독": "밀폐공간·양생 작업",
+        "감전": "철골·지붕 고소 작업",
+    },
+    "제조업": {
+        "떨어짐": "고소작업대·설비 보수",
+        "감전": "고소작업대·설비 보수",
+        "끼임": "컨베이어·회전체 점검/청소",
+        "깔림·뒤집힘": "지게차·물류 하역 작업",
+        "부딪힘": "지게차·물류 하역 작업",
+        "물체에 맞음": "지게차·물류 하역 작업",
+        "붕괴·무너짐": "지게차·물류 하역 작업",
+        "화재·폭발": "화학물질·밀폐탱크 작업",
+        "질식·중독": "화학물질·밀폐탱크 작업",
+    },
+    "서비스업": {
+        "떨어짐": "건물 시설관리·조명 교체",
+        "감전": "건물 시설관리·조명 교체",
+        "물체에 맞음": "건물 시설관리·조명 교체",
+        "질식·중독": "건물 시설관리·조명 교체",
+        "끼임": "폐기물 파쇄·압축기 작업",
+        "깔림·뒤집힘": "물류창고 상하차·지게차 작업",
+        "붕괴·무너짐": "물류창고 상하차·지게차 작업",
+        "부딪힘": "배달·이륜차 운행 작업",
+        "화재·폭발": "주방·조리실 화상/절단 작업",
+    },
+}
 
+WORK_TYPE_DEFAULT_EQUIP = {
+    "이동식 비계·사다리 작업": "비계 및 작업발판",
+    "굴착·가시설 토목 작업": "굴착 사면 및 가시설",
+    "철골·지붕 고소 작업": "고소 구조물 및 개구부",
+    "타워크레인·양중 작업": "양중기 및 인양 달기구",
+    "밀폐공간·양생 작업": "밀폐공간 및 환기설비",
+    "컨베이어·회전체 점검/청소": "회전 설비 및 구동부",
+    "프레스·절곡·전단기 작업": "프레스·성형 가공설비",
+    "지게차·물류 하역 작업": "하역·운반 설비 및 적재물",
+    "고소작업대·설비 보수": "점검 설비 및 작업발판",
+    "화학물질·밀폐탱크 작업": "화학설비 및 저장탱크",
+    "물류창고 상하차·지게차 작업": "상하차 설비 및 적재화물",
+    "건물 시설관리·조명 교체": "건물 설비 및 점검 작업대",
+    "폐기물 파쇄·압축기 작업": "폐기물 파쇄·압축 설비",
+    "주방·조리실 화상/절단 작업": "조리 설비 및 가열·절단기구",
+    "배달·이륜차 운행 작업": "운행 차량 및 이륜차",
+}
 
-def fetch_kosha_cases(business="", limit=500, rows=100):
-    collected, page = [], 1
-    while len(collected) < limit:
-        params = {
-            "serviceKey": SERVICE_KEY,
-            "callApiId": "1060",
-            "pageNo": page,
-            "numOfRows": min(rows, limit - len(collected)),
-        }
-        if business:
-            params["business"] = business
+EQUIP_ALIASES = {
+    "굴삭기": "굴착기",
+    "고소작업차": "차량탑재형 고소작업대",
+    "스카이차": "차량탑재형 고소작업대",
+    "이동식비계": "이동식 비계",
+    "시스템비계": "시스템 비계",
+    "이동식사다리": "이동식 사다리",
+    "A형사다리": "A형 사다리",
+    "산업용로봇": "산업용 로봇",
+    "유압성형프레스": "유압 성형 프레스",
+}
 
-        data = None
-        for url in URLS:
-            try:
-                res = requests.get(url, params=params, timeout=25)
-                res.raise_for_status()
-                data = res.json()
-                break
-            except Exception as e:
-                print(f"[{business}] 재시도({url[:5]}): {e}")
+EQUIP_LIST = sorted(
+    [
+        "차량탑재형 고소작업대", "시저형 고소작업대", "고소작업대", "고소작업차", "스카이차", "곤돌라",
+        "시스템 비계", "이동식 비계", "강관비계", "외부비계", "달비계", "말비계", "비계",
+        "A형 사다리", "이동식 사다리", "사다리", "작업발판",
+        "채광창", "선라이트", "슬레이트 지붕", "샌드위치 패널", "지붕 패널", "지붕판넬", "PC판넬",
+        "데크플레이트", "거푸집", "알폼", "갱폼", "동바리", "흙막이 지보공", "토류판",
+        "크램쉘 버킷", "굴착기", "굴삭기", "불도저", "항타기", "스키드로더", "로더", "롤러",
+        "천장크레인", "타워크레인", "이동식 크레인", "크레인", "호이스트", "윈치", "슬링벨트", "와이어로프",
+        "지게차", "오더피커", "리치스태커", "전동대차", "대차", "톤백", "파렛트", "팔레트",
+        "벨트 컨베이어", "셔틀컨베이어", "스크류 컨베이어", "컨베이어",
+        "산업용 로봇", "유압 성형 프레스", "동력프레스", "프레스", "사출성형기", "사출기",
+        "절곡기", "전단기", "절단기", "선반", "밀링기", "보링기", "드릴기", "천공기", "연삭기", "그라인더", "톱기계",
+        "분쇄선별기", "자력선별기", "선별기", "파쇄기", "분쇄기", "압축기", "교반기", "상토혼합기", "혼합기", "배합기", "볼밀",
+        "저장탱크", "반응기", "압력용기", "집진기", "화학설비", "용광로", "전기로", "보일러", "LPG 용기",
+        "건설용 리프트", "산업용 리프트", "화물용 승강기", "엘리베이터", "승강기", "기계식 주차설비",
+        "폐기물 수집차", "암롤박스", "집게차", "청소차", "자동세차기",
+        "화물자동차", "트레일러", "덤프트럭", "믹서트럭", "펌프카", "탱크로리", "이륜차", "오토바이",
+        "간접 가열식 국솥", "국솥", "튀김기", "육절기", "반죽기",
+        "에어컨 실외기", "수변전 설비", "소방배관", "배관", "저수조", "정화조", "맨홀", "변압기", "분전반", "통신케이블",
+        "예초기", "기계톱", "어선",
+    ],
+    key=lambda x: len(x.replace(" ", "")),
+    reverse=True,
+)
 
-        if not data or str(data.get("header", {}).get("resultCode", "")) != "00":
-            break
+NON_EQUIP_STOPWORDS = {
+    "작업", "이동", "운반", "운전", "점검", "보수", "수리", "해체", "설치", "정리", "청소",
+    "상부", "하부", "내부", "외부", "바닥", "지상", "지하", "현장", "사업장", "공장", "창고",
+    "재해자", "근로자", "작업자", "피재자", "동료", "운전자", "경비원", "물체", "중량물", "자재",
+    "화물", "제품", "이물질", "더미", "사고", "발생", "과정", "주변", "인근", "사이", "방향",
+    "도로", "통로", "계단", "해상", "수조", "공간", "부위", "상태", "원인", "확인", "위", "아래",
+    "머리", "가슴", "다리", "복부", "신체", "얼굴", "손가락", "발목", "상체", "하반신", "전신", "몸",
+    "일부", "및", "또는", "중", "시", "후", "전",
+}
 
-        body = data.get("body", {}) or {}
-        items_wrap = body.get("items") or {}
-        items = items_wrap.get("item", []) if isinstance(items_wrap, dict) else []
-        if isinstance(items, dict):
-            items = [items]
-        if not items:
-            break
+LEADING_MODIFIER_RE = re.compile(
+    r"^(?:[가-힣0-9]+(?:하던|중인|중이던|하는|되는|된|한|던|아|어|여|고|며|면서|다가)\s+)+"
+)
 
-        collected.extend(items)
-        total_count = int(body.get("totalCount", 0) or 0)
-        print(f"[{business}] {page}p 완료 — 누적 {len(collected)}/{min(limit, total_count)}건")
-        if len(collected) >= total_count or len(items) < min(rows, limit - (len(collected) - len(items))):
-            break
-        page += 1
-        time.sleep(0.15)
-    return collected
+EQUIP_SUFFIX_RE = re.compile(
+    r"([가-힣A-Za-z0-9·\-]{2,12}(?:\s+[가-힣A-Za-z0-9·\-]{2,10})?"
+    r"(?:기계|설비|장치|탱크|배관|밸브|벨트|로프|비계|발판|리프트|크레인|컨베이어|"
+    r"패널|판넬|슬래브|거푸집|동바리|보일러|차단기|차단문|변압기|전선|케이블|용기|선박|어선|창호|실린더|피더|"
+    r"혼합기|파쇄기|압축기|분쇄기|선별기|교반기|절단기|연삭기|천공기|항타기|압쇄기|성형기|주입기|"
+    r"작업대|적재대|적재함|지지대|운반차|차량|트럭|대차))"
+)
 
 
 def clean_text(text):
@@ -413,9 +613,130 @@ def detect_hazard(title, contents):
     return "물체에 맞음"
 
 
+def _keyword_in_text(kw, text_lower, text_compact):
+    kw_lower = kw.lower()
+    if kw_lower in text_lower:
+        return True
+    kw_compact = kw_lower.replace(" ", "")
+    if len(kw_compact) >= 3 and kw_compact in text_compact:
+        return True
+    return False
+
+
+def classify_work_type(industry, title, contents, hazard_type):
+    """
+    Classifies work_type using title-weighted (2.5x) domain keyword scoring,
+    falling back to a hazard-type-aware classifier when no domain keyword matches.
+    """
+    rules = WORK_TYPE_DOMAIN_RULES.get(industry, [])
+    t_low = (title or "").lower()
+    t_comp = t_low.replace(" ", "")
+    b_low = (contents or "").lower()
+    b_comp = b_low.replace(" ", "")
+
+    best_wt = None
+    best_score = 0.0
+
+    for wt, kw_list in rules:
+        score = 0.0
+        for kw, base_weight in kw_list:
+            if _keyword_in_text(kw, t_low, t_comp):
+                score += base_weight * TITLE_SCORE_WEIGHT
+            if _keyword_in_text(kw, b_low, b_comp):
+                score += base_weight * BODY_SCORE_WEIGHT
+        if score > best_score:
+            best_score = score
+            best_wt = wt
+
+    if best_wt and best_score > 0:
+        return best_wt
+
+    fallback_map = HAZARD_WORK_TYPE_FALLBACK.get(industry, {})
+    if hazard_type in fallback_map:
+        return fallback_map[hazard_type]
+
+    return rules[0][0]
+
+
+def _clean_candidate_noun(phrase):
+    p = clean_text(phrase)
+    p = re.sub(r"\([^)]*\)", "", p)
+    p = re.sub(r"\d+\s*명[이가]?\s*", "", p)
+    p = re.sub(r"^.*?(?:작업\s*중|이동\s*중|운반\s*중|점검\s*중|보수\s*중|수리\s*중|해체\s*중|설치\s*중)\s+", "", p)
+    p = re.sub(r"^.*?(?:에서|내에서|현장에서|공장에서|창고에서)\s+", "", p)
+    p = LEADING_MODIFIER_RE.sub("", p).strip()
+    p = re.sub(r"(?:의|을|를|이|가|은|는|에|에서|으로|로|와|과)$", "", p).strip()
+
+    raw_tokens = [tok for tok in p.split() if len(tok) >= 2 and tok not in NON_EQUIP_STOPWORDS]
+    tokens = [
+        tok for tok in raw_tokens
+        if not re.search(r"(?:하다|하던|하며|되어|되면서|못하고|중이던|있던|발생|사망|무너짐|떨어짐|추락|연쇄적)$", tok)
+    ]
+    if not tokens:
+        return ""
+    candidate = " ".join(tokens[-2:]) if len(tokens) > 2 else " ".join(tokens)
+    if len(candidate) < 2 or len(candidate) > 16:
+        return ""
+    if candidate in NON_EQUIP_STOPWORDS:
+        return ""
+    return EQUIP_ALIASES.get(candidate.replace(" ", ""), candidate)
+
+
+def extract_equipment_noun_phrase(title, contents):
+    """
+    Extracts an equipment/object Korean noun phrase from accident title
+    (or equipment-suffixed noun from contents) when no dictionary item matches.
+    """
+    title_patterns = [
+        r"([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)(?:에\s*(?:끼임|맞음|깔림|부딪힘|감전|말림|치임)|와\s*충돌|과\s*충돌)",
+        r"([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)(?:에서|위에서|상부에서|상단에서)\s*(?:떨어짐|추락|빠짐|미끄러짐)",
+        r"^([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)\s+(?:설치|해체|교체|보수|수리|점검|운반|인양|절단|천공|가공|세척|도장|투입|개방|포설|시공|철거|상차|하차|하역|조재)\s*작업",
+        r"^([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)\s*(?:전도|전복|붕괴|폭발|파단|파손|누출)",
+    ]
+
+    for pat in title_patterns:
+        for m in re.finditer(pat, title or ""):
+            cand = _clean_candidate_noun(m.group(1))
+            if cand:
+                return cand
+
+    for src in (title, contents):
+        for m in EQUIP_SUFFIX_RE.finditer(src or ""):
+            cand = _clean_candidate_noun(m.group(1))
+            if cand:
+                return cand
+
+    return ""
+
+
+def extract_equipment(title, contents, work_type):
+    """
+    1) Prioritizes dictionary equipment match in `title` first, then `contents`.
+    2) Falls back to Korean noun-phrase extraction on `title` / equipment-suffix match.
+    3) Uses clean work-type equipment label instead of raw work_type prefix.
+    """
+    title_compact = (title or "").replace(" ", "")
+    for equip in EQUIP_LIST:
+        key = equip.replace(" ", "")
+        if key in title_compact:
+            return EQUIP_ALIASES.get(key, equip)
+
+    contents_compact = (contents or "").replace(" ", "")
+    for equip in EQUIP_LIST:
+        key = equip.replace(" ", "")
+        if key in contents_compact:
+            return EQUIP_ALIASES.get(key, equip)
+
+    extracted = extract_equipment_noun_phrase(title, contents)
+    if extracted:
+        return extracted
+
+    return WORK_TYPE_DEFAULT_EQUIP.get(work_type, "현장 작업 설비 및 기구")
+
+
 def select_template_key(hazard_type, full_text):
     if hazard_type == "끼임":
-        if any(k in full_text for k in ["지게차", "고소작업", "아웃트리거", "리프트", "엘리베이터", "승강기", "청소차", "트레일러", "크레인", "대차", "차량"]):
+        if any(k in full_text for k in ["지게차", "고소작업", "아웃트리거", "리프트", "엘리베이터", "승강기", "청소차", "수집차", "트레일러", "크레인", "대차", "차량", "스키드로더"]):
             return "끼임_장비"
         return "끼임_설비"
     if hazard_type == "물체에 맞음":
@@ -427,10 +748,162 @@ def select_template_key(hazard_type, full_text):
     return hazard_type if hazard_type in TEMPLATES else "맞음_낙하비래"
 
 
-def main():
+def register_template(t_key, templates_out, tpl_key_to_id):
+    if t_key not in tpl_key_to_id:
+        tpl = TEMPLATES[t_key]
+        t_id = f"T{len(templates_out) + 1:02d}"
+        tpl_key_to_id[t_key] = t_id
+        templates_out[t_id] = {
+            "preventive_measures": tpl["measures"],
+            "tbm_checklist": tpl["tbm"],
+            "ox_comparison": tpl["ox"],
+            "worker_slogan": tpl["slogan"],
+            "legal_ref": tpl["legal"],
+            "related_work_types": tpl["related"],
+            "root_causes": [
+                "작업 전 관리감독자의 현장 안전상태 사전 점검 누락",
+                "동종·유사 공정 위험성평가 및 5분 TBM 교육 미실시",
+            ],
+        }
+    return tpl_key_to_id[t_key]
+
+
+def build_keywords(industry, hazard_type, equipment, work_type):
+    ordered = []
+    for tok in (industry, hazard_type, equipment, work_type.split("·")[0]):
+        if tok and tok not in ordered:
+            ordered.append(tok)
+    return ordered
+
+
+def fetch_kosha_cases(service_key, business="", limit=500, rows=100):
+    import requests
+
+    collected, page = [], 1
+    while len(collected) < limit:
+        params = {
+            "serviceKey": service_key,
+            "callApiId": "1060",
+            "pageNo": page,
+            "numOfRows": min(rows, limit - len(collected)),
+        }
+        if business:
+            params["business"] = business
+
+        data = None
+        for url in URLS:
+            try:
+                res = requests.get(url, params=params, timeout=25)
+                res.raise_for_status()
+                data = res.json()
+                break
+            except Exception as e:
+                print(f"[{business}] 재시도({url[:5]}): {e}")
+
+        if not data or str(data.get("header", {}).get("resultCode", "")) != "00":
+            break
+
+        body = data.get("body", {}) or {}
+        items_wrap = body.get("items") or {}
+        items = items_wrap.get("item", []) if isinstance(items_wrap, dict) else []
+        if isinstance(items, dict):
+            items = [items]
+        if not items:
+            break
+
+        collected.extend(items)
+        total_count = int(body.get("totalCount", 0) or 0)
+        print(f"[{business}] {page}p 완료 — 누적 {len(collected)}/{min(limit, total_count)}건")
+        if len(collected) >= total_count or len(items) < min(rows, limit - (len(collected) - len(items))):
+            break
+        page += 1
+        time.sleep(0.15)
+    return collected
+
+
+def reclassify_local_db(db_path):
+    if not os.path.exists(db_path):
+        print(f"ERROR: 로컬 DB 파일을 찾을 수 없습니다: {db_path}")
+        sys.exit(1)
+
+    with open(db_path, "r", encoding="utf-8") as f:
+        existing = json.load(f)
+
+    raw_cases = existing.get("cases", [])
+    if not raw_cases:
+        print("ERROR: 로컬 DB에 재분류할 사고사례가 없습니다.")
+        sys.exit(1)
+
+    templates_out, tpl_key_to_id, updated_cases = {}, {}, []
+    industry_to_biz = {"건설현장": "건설업", "제조업": "제조업", "서비스업": "서비스업"}
+
+    for case in raw_cases:
+        title = clean_text(str(case.get("title", "")))
+        summary_lines = case.get("summary_3lines") or []
+        contents = clean_text(" ".join(str(x) for x in summary_lines if x))
+        full_text = f"{title} {contents}"
+
+        industry = case.get("industry", "건설현장")
+        if industry not in WORK_TYPE_DOMAIN_RULES:
+            industry = "건설현장"
+
+        raw_process = str(case.get("process", ""))
+        raw_biz = raw_process.split(" · ")[0].strip() if " · " in raw_process else industry_to_biz[industry]
+
+        hazard_type = detect_hazard(title, contents)
+        work_type = classify_work_type(industry, title, contents, hazard_type)
+        equipment = extract_equipment(title, contents, work_type)
+        t_key = select_template_key(hazard_type, full_text)
+        t_id = register_template(t_key, templates_out, tpl_key_to_id)
+
+        updated_cases.append({
+            "id": case["id"],
+            "industry": industry,
+            "process": f"{raw_biz} · {work_type}",
+            "work_type": work_type,
+            "equipment": equipment,
+            "hazard_type": hazard_type,
+            "season_tag": case.get("season_tag", "상시"),
+            "severity": case.get("severity", "중대재해"),
+            "title": title,
+            "source_ref": case.get("source_ref", ""),
+            "summary_3lines": summary_lines,
+            "direct_causes": [
+                f"{equipment} 작업 시 핵심 {hazard_type} 방호조치 미흡",
+                "작업 전 위험요인 확인 및 안전작업절차 미준수",
+                "위험구역 출입 통제 또는 전용 보호구 착용 미흡",
+            ],
+            "keywords": build_keywords(industry, hazard_type, equipment, work_type),
+            "t": t_id,
+        })
+
+    payload = {
+        "format": "kosha-lite-v1",
+        "updated_at": existing.get("updated_at") or time.strftime("%Y-%m-%d"),
+        "templates": templates_out,
+        "cases": updated_cases,
+    }
+    with open(db_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+
+    size_kb = os.path.getsize(db_path) / 1024
+    print(f"[로컬 재분류 완료] {len(updated_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(db_path)}")
+    print("업종별 분포:", dict(Counter(x["industry"] for x in updated_cases)))
+    for ind in ("건설현장", "제조업", "서비스업"):
+        dist = Counter(x["work_type"] for x in updated_cases if x["industry"] == ind)
+        print(f"  - {ind} 작업유형 분포:", dict(dist))
+
+
+def fetch_and_build_db(db_path):
+    raw_key = os.environ.get("KOSHA_API_KEY", "").strip()
+    if not raw_key:
+        print("ERROR: KOSHA_API_KEY 시크릿이 설정되지 않았습니다.")
+        sys.exit(1)
+
+    service_key = unquote(raw_key)
     all_raw, seen = [], set()
     for biz in TARGET_BUSINESSES:
-        for it in fetch_kosha_cases(biz, PER_BUSINESS_LIMIT, NUM_OF_ROWS):
+        for it in fetch_kosha_cases(service_key, biz, PER_BUSINESS_LIMIT, NUM_OF_ROWS):
             bno = str(it.get("boardno", "")).strip()
             if bno and bno not in seen:
                 seen.add(bno)
@@ -451,29 +924,11 @@ def main():
         full_text = f"{title} {contents}"
         industry = "건설현장" if "건설" in raw_biz else "제조업" if "제조" in raw_biz else "서비스업"
         hazard_type = detect_hazard(title, contents)
-        work_type = next((wt for wt, kws in WORK_TYPE_RULES[industry] if any(k in full_text.lower() for k in kws)), WORK_TYPE_RULES[industry][0][0])
+        work_type = classify_work_type(industry, title, contents, hazard_type)
+        equipment = extract_equipment(title, contents, work_type)
         t_key = select_template_key(hazard_type, full_text)
-        tpl = TEMPLATES[t_key]
+        t_id = register_template(t_key, templates_out, tpl_key_to_id)
 
-        if t_key not in tpl_key_to_id:
-            t_id = f"T{len(templates_out) + 1:02d}"
-            tpl_key_to_id[t_key] = t_id
-            templates_out[t_id] = {
-                "preventive_measures": tpl["measures"],
-                "tbm_checklist": tpl["tbm"],
-                "ox_comparison": tpl["ox"],
-                "worker_slogan": tpl["slogan"],
-                "legal_ref": tpl["legal"],
-                "related_work_types": tpl["related"],
-                "root_causes": [
-                    "작업 전 관리감독자의 현장 안전상태 사전 점검 누락",
-                    "동종·유사 공정 위험성평가 및 5분 TBM 교육 미실시",
-                ],
-            }
-        else:
-            t_id = tpl_key_to_id[t_key]
-
-        equipment = next((e for e in EQUIP_LIST if e.replace(" ", "") in full_text.replace(" ", "")), work_type.split("·")[0])
         prefix = {"건설현장": "CON", "제조업": "MFG", "서비스업": "SVC"}[industry]
 
         lite_cases.append({
@@ -496,7 +951,7 @@ def main():
                 "작업 전 위험요인 확인 및 안전작업절차 미준수",
                 "위험구역 출입 통제 또는 전용 보호구 착용 미흡",
             ],
-            "keywords": list({industry, hazard_type, equipment, work_type.split("·")[0]}),
+            "keywords": build_keywords(industry, hazard_type, equipment, work_type),
             "t": t_id,
         })
 
@@ -504,21 +959,40 @@ def main():
         print("ERROR: 유효 사례가 0건입니다.")
         sys.exit(1)
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     payload = {
         "format": "kosha-lite-v1",
         "updated_at": time.strftime("%Y-%m-%d"),
         "templates": templates_out,
         "cases": lite_cases,
     }
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+    with open(db_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
 
-    size_kb = os.path.getsize(OUTPUT_PATH) / 1024
-    print(f"저장 완료: {len(lite_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(OUTPUT_PATH)}")
+    size_kb = os.path.getsize(db_path) / 1024
+    print(f"저장 완료: {len(lite_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(db_path)}")
     print("업종별 분포:", dict(Counter(x["industry"] for x in lite_cases)))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="KOSHA 국내재해사례 Lite DB 수집 및 도메인 재분류 스크립트")
+    parser.add_argument(
+        "--reclassify-local",
+        action="store_true",
+        help="API 호출 없이 로컬 public/data/accidents_db_lite.json을 최신 분류기·기인물 추출기로 재분류합니다.",
+    )
+    parser.add_argument(
+        "--db-path",
+        default=OUTPUT_PATH,
+        help=f"입출력 Lite DB 경로 (기본값: {OUTPUT_PATH})",
+    )
+    args = parser.parse_args()
+
+    if args.reclassify_local:
+        reclassify_local_db(args.db_path)
+    else:
+        fetch_and_build_db(args.db_path)
 
 
 if __name__ == "__main__":
     main()
-# === END OF FILE ===

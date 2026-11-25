@@ -267,6 +267,7 @@ export function generateEducationMaterial(params: {
   includeCrossProcess: boolean;
   history: GenerationHistoryState;
   isRegenerate: boolean;
+  preservePrimaryCase?: boolean;
 }): { material: GeneratedMaterial; nextHistory: GenerationHistoryState } {
   const {
     allCases,
@@ -276,9 +277,12 @@ export function generateEducationMaterial(params: {
     includeCrossProcess,
     history,
     isRegenerate,
+    preservePrimaryCase = false,
   } = params;
 
-  const nextVersion = history.version + 1;
+  const shouldPreserve = preservePrimaryCase && !isRegenerate;
+  const nextVersion =
+    shouldPreserve && history.version > 0 ? history.version : history.version + 1;
   const seedHash = nextVersion * 37 + workType.length * 13 + industry.length * 7;
 
   // 1. Score all cases across the full loaded DB
@@ -287,12 +291,21 @@ export function generateEducationMaterial(params: {
     .sort((a, b) => b.score - a.score);
 
   const exactMatches = scored.filter((s) => s.isExact);
-  const recentPrimary = history.recentPrimaryIds ?? (history.lastPrimaryCaseId ? [history.lastPrimaryCaseId] : []);
-  const recentRelated = history.recentRelatedIds ?? (history.lastRelatedCaseId ? [history.lastRelatedCaseId] : []);
+  const recentPrimary =
+    history.recentPrimaryIds ?? (history.lastPrimaryCaseId ? [history.lastPrimaryCaseId] : []);
+  const recentRelated =
+    history.recentRelatedIds ?? (history.lastRelatedCaseId ? [history.lastRelatedCaseId] : []);
+
+  const preservedPrimary =
+    shouldPreserve && history.lastPrimaryCaseId
+      ? scored.find((s) => s.item.id === history.lastPrimaryCaseId)
+      : undefined;
 
   let chosen: ScoredCase;
 
-  if (exactMatches.length > 0) {
+  if (preservedPrimary) {
+    chosen = preservedPrimary;
+  } else if (exactMatches.length > 0) {
     // Prefer exact industry + work_type matches first when available
     const exactSameIndustry = exactMatches.filter((s) => s.item.industry === industry);
     const primaryPool = exactSameIndustry.length > 0 ? exactSameIndustry : exactMatches;
@@ -306,22 +319,30 @@ export function generateEducationMaterial(params: {
   // 2. Perspective mode (Section 02 content mode)
   let perspectiveMode: PerspectiveMode;
   if (variationOption === 'auto') {
-    perspectiveMode = pickNextNonRepeating(ALL_MODES, history.lastMode, seedHash);
+    perspectiveMode =
+      shouldPreserve && history.lastMode
+        ? history.lastMode
+        : pickNextNonRepeating(ALL_MODES, history.lastMode, seedHash);
   } else {
     perspectiveMode = variationOption;
   }
 
   // 3. Header/Visual style (never scrambles 01-02-03-04 section order)
-  const layoutStyle = pickNextNonRepeating(
-    ALL_LAYOUTS,
-    isRegenerate ? history.lastLayoutId : undefined,
-    seedHash + 1
-  );
+  const layoutStyle: LayoutStyleId =
+    shouldPreserve && history.lastLayoutId
+      ? history.lastLayoutId
+      : pickNextNonRepeating(
+          ALL_LAYOUTS,
+          isRegenerate ? history.lastLayoutId : undefined,
+          seedHash + 1
+        );
 
   // 4. Safety color theme
   const nativeThemeId = getNativeThemeForHazard(chosen.item.hazard_type);
   let themeId: SafetyThemeId;
-  if (!isRegenerate) {
+  if (shouldPreserve && history.lastThemeId) {
+    themeId = history.lastThemeId;
+  } else if (!isRegenerate) {
     themeId = nativeThemeId;
   } else {
     const orderedPool: SafetyThemeId[] = [
@@ -334,14 +355,32 @@ export function generateEducationMaterial(params: {
   const theme: SafetyThemeConfig = SAFETY_THEMES[themeId];
 
   // 5. Cross-process related case
-  const relatedCase = includeCrossProcess
-    ? findCrossProcessCase(allCases, chosen.item, seedHash + nextVersion * 11, isRegenerate ? recentRelated : [])
-    : null;
+  let relatedCase: AccidentCase | null = null;
+  if (includeCrossProcess) {
+    const preservedRelated =
+      shouldPreserve && history.lastRelatedCaseId
+        ? allCases.find(
+            (c) => c.id === history.lastRelatedCaseId && c.id !== chosen.item.id
+          ) ?? null
+        : null;
+    relatedCase =
+      preservedRelated ??
+      findCrossProcessCase(
+        allCases,
+        chosen.item,
+        seedHash + nextVersion * 11,
+        isRegenerate ? recentRelated : []
+      );
+  }
 
-  const nextRecentPrimary = [...recentPrimary.slice(-24), chosen.item.id];
-  const nextRecentRelated = relatedCase
-    ? [...recentRelated.slice(-24), relatedCase.id]
-    : recentRelated;
+  const nextRecentPrimary =
+    recentPrimary[recentPrimary.length - 1] === chosen.item.id
+      ? recentPrimary
+      : [...recentPrimary.slice(-24), chosen.item.id];
+  const nextRecentRelated =
+    relatedCase && recentRelated[recentRelated.length - 1] !== relatedCase.id
+      ? [...recentRelated.slice(-24), relatedCase.id]
+      : recentRelated;
 
   const material: GeneratedMaterial = {
     version: nextVersion,

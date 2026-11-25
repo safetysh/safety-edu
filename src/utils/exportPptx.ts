@@ -1,4 +1,4 @@
-import PptxGenJS from 'pptxgenjs';
+import type PptxGenJS from 'pptxgenjs';
 import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
 import {
   getCaseTranslations,
@@ -22,7 +22,8 @@ export async function downloadSafetyPptx(
   material: GeneratedMaterial,
   siteInfo: CustomSiteInfo
 ): Promise<string> {
-  const pptx = new PptxGenJS();
+  const { default: PptxGenJSRuntime } = await import('pptxgenjs');
+  const pptx = new PptxGenJSRuntime();
   pptx.layout = 'LAYOUT_16x9'; // 10 x 5.625 inches
   pptx.author = siteInfo.instructorName || '산업안전보건 교육담당자';
   pptx.company = siteInfo.siteName || '현장 안전보건관리팀';
