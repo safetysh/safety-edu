@@ -2,6 +2,12 @@ export type IndustryType = '건설현장' | '제조업' | '서비스업';
 
 export type HazardType = string;
 
+export type SourceType = 'FATALITY' | 'SIF' | 'CASE';
+
+export type SourceFilterTab = 'ALL' | 'FATALITY' | 'SIF';
+
+export type SidebarTabId = 'basic' | 'search' | 'site';
+
 export type OutputFormat = 'ops' | 'slides' | 'cardnews';
 
 export type ForeignLanguageCode = 'none' | 'en' | 'vi' | 'zh' | 'th' | 'km' | 'uz';
@@ -46,25 +52,56 @@ export interface KytQuiz {
   answers: [string, string, string];
 }
 
+export interface SifMetadata {
+  cateSeNm?: string;
+  sifLclsfNm?: string;
+  sifMclsfNm?: string;
+  sifSclsfNm?: string;
+  orgtNm?: string;
+  situation?: string | null;
+}
+
 export interface AccidentCase {
   id: string;
+  source_type?: SourceType;
+  facts_locked?: boolean;
+  boardno?: string;
+  atcflcnt?: number;
+  occurred_date?: string;
+  sort_ts?: string;
+  region?: string;
   industry: IndustryType;
+  process?: string;
   work_type: string;
   equipment: string;
   hazard_type: HazardType;
+  season_tag?: string;
+  severity?: string;
   title: string;
+  overview_raw?: string;
+  high_risk_work?: string;
+  hazard_factor?: string;
+  sif_meta?: SifMetadata;
   summary_3lines: [string, string, string];
   timeline: [TimelineStep, TimelineStep, TimelineStep, TimelineStep];
   direct_causes: [string, string, string];
   root_causes: [string, string];
-  preventive_measures: [string, string, string, string];
-  tbm_checklist: [string, string, string, string, string];
+  preventive_measures: string[];
+  tbm_checklist: string[];
   ox_comparison: [OXComparisonPair, OXComparisonPair];
   kyt_quiz: KytQuiz;
   worker_slogan: string;
   legal_ref: string;
   related_work_types: string[];
+  source_ref?: string;
+  source_image_url?: string | null;
+  disclaimer?: string;
   source?: 'builtin' | 'custom';
+}
+
+export interface CaseEditableOverride {
+  preventive_measures?: string[];
+  tbm_checklist?: string[];
 }
 
 export interface SafetyThemeConfig {
@@ -84,6 +121,62 @@ export interface SafetyThemeConfig {
   pptxAccent: string;
 }
 
+export interface SourceBrandStyle {
+  sourceType: SourceType;
+  shortLabel: string;
+  badgePrefix: string;
+  primaryHex: string;
+  darkHex: string;
+  softBgHex: string;
+  borderHex: string;
+  textHex: string;
+  pptxHex: string;
+  pptxSoftBg: string;
+  defaultSourceRef: string;
+}
+
+export const SOURCE_BRAND_STYLES: Record<SourceType, SourceBrandStyle> = {
+  FATALITY: {
+    sourceType: 'FATALITY',
+    shortLabel: '최신 사망속보',
+    badgePrefix: '최신 사망속보',
+    primaryHex: '#C62828',
+    darkHex: '#7F1D1D',
+    softBgHex: '#FEF2F2',
+    borderHex: '#FECACA',
+    textHex: '#991B1B',
+    pptxHex: 'C62828',
+    pptxSoftBg: 'FEF2F2',
+    defaultSourceRef: '한국산업안전보건공단 사고사망 속보',
+  },
+  SIF: {
+    sourceType: 'SIF',
+    shortLabel: '공단 SIF 공식 분석',
+    badgePrefix: '공단 SIF 공식 분석',
+    primaryHex: '#D97706',
+    darkHex: '#78350F',
+    softBgHex: '#FFFBEB',
+    borderHex: '#FDE68A',
+    textHex: '#92400E',
+    pptxHex: 'D97706',
+    pptxSoftBg: 'FFFBEB',
+    defaultSourceRef: '한국산업안전보건공단 사망사고 고위험요인(SIF) 아카이브',
+  },
+  CASE: {
+    sourceType: 'CASE',
+    shortLabel: '유사 재해사례',
+    badgePrefix: '유사 재해사례',
+    primaryHex: '#1E293B',
+    darkHex: '#0F172A',
+    softBgHex: '#F8FAFC',
+    borderHex: '#CBD5E1',
+    textHex: '#1E293B',
+    pptxHex: '1E293B',
+    pptxSoftBg: 'F8FAFC',
+    defaultSourceRef: '한국산업안전보건공단 국내재해사례',
+  },
+};
+
 export interface CustomSiteInfo {
   siteName: string;
   educationDate: string;
@@ -94,6 +187,7 @@ export interface CustomSiteInfo {
   logoDataUrl: string | null;
   logoFileName: string;
   showTbmSignTable: boolean;
+  inkSaverMode: boolean;
 }
 
 export interface GeneratedMaterial {
@@ -112,6 +206,46 @@ export interface GeneratedMaterial {
   layoutLabel: string;
   generatedAt: string;
   seedHash: number;
+  isCustomEdited?: boolean;
+  isMeasuresEdited?: boolean;
+  isTbmEdited?: boolean;
+}
+
+export interface FatalityHeadlineItem {
+  id: string;
+  industry: IndustryType;
+  work_type: string;
+  hazard_type: string;
+  equipment: string;
+  occurred_date: string;
+  region?: string;
+  title: string;
+}
+
+export interface MetaSummaryData {
+  format: string;
+  updated_at: string;
+  shards: Record<IndustryType, string>;
+  ext_shards?: Partial<Record<IndustryType, string>>;
+  totals: {
+    all: number;
+    by_industry: Record<IndustryType, number>;
+    by_source: Record<SourceType, number>;
+  };
+  industry_source_counts: Record<
+    IndustryType,
+    {
+      file: string;
+      ext_file?: string;
+      size_kb: number;
+      ext_size_kb?: number;
+      total: number;
+      FATALITY: number;
+      SIF: number;
+      CASE: number;
+    }
+  >;
+  recent_fatalities: FatalityHeadlineItem[];
 }
 
 export const INDUSTRY_WORK_TYPES: Record<IndustryType, string[]> = {

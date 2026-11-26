@@ -6,6 +6,13 @@ import {
   getSeasonalTranslation,
 } from '../data/multilingualDict';
 import { SEASONAL_RISKS } from '../data/seasonalRisks';
+import {
+  fitFactualOverviewForA4,
+  formatCrossProcessSummaryVerbatim,
+  formatSourceHeaderBadge,
+  getCaseOverviewVerbatim,
+  getSourceBrandStyle,
+} from './textFit';
 
 const FONT = 'Malgun Gothic';
 
@@ -16,7 +23,8 @@ function sanitizeFileName(text: string): string {
 /**
  * Generates an editable 5-slide 16:9 PowerPoint presentation (.pptx)
  * using pptxgenjs completely client-side with zero external API calls.
- * Supports multilingual subtitles, seasonal risk warnings, and embedded site logo PNG.
+ * Synchronizes source identity colors (FATALITY/SIF/CASE), verbatim facts,
+ * inline-edited field measures & TBM items, and automatic attribution switching.
  */
 export async function downloadSafetyPptx(
   material: GeneratedMaterial,
@@ -31,6 +39,12 @@ export async function downloadSafetyPptx(
   pptx.subject = `${material.selectedIndustry} · ${material.primaryCase.hazard_type} 재해예방`;
 
   const { primaryCase: c, relatedCase, theme, isExactMatch } = material;
+  const sourceBrand = getSourceBrandStyle(c);
+  const sourceBadgeText = formatSourceHeaderBadge(c);
+  const primaryAccentPptx = c.source_type === 'FATALITY' || c.source_type === 'SIF'
+    ? sourceBrand.pptxHex
+    : theme.pptxPrimary;
+
   const siteLabel = siteInfo.siteName.trim() || '________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
   const instructorLabel = siteInfo.instructorName.trim() || '________________';
@@ -39,6 +53,14 @@ export async function downloadSafetyPptx(
   const langLabel = getForeignLanguageNativeLabel(siteInfo.foreignLanguage);
   const season = SEASONAL_RISKS[siteInfo.seasonRisk];
   const seasonTrans = getSeasonalTranslation(siteInfo.seasonRisk, siteInfo.foreignLanguage);
+
+  const isMeasuresEdited = Boolean(material.isMeasuresEdited || material.isCustomEdited);
+  const isTbmEdited = Boolean(material.isTbmEdited);
+  const measuresAttributionLabel = isMeasuresEdited
+    ? '공단 권고안 기반 · 현장 맞춤 반영'
+    : c.source_type === 'SIF'
+      ? '공단 원문 (SIF 위험성감소대책)'
+      : '공단 표준 예방가이드 원문';
 
   const addLogoIfPresent = (slide: PptxGenJS.Slide, x: number, y: number, w = 1.05, h = 0.28) => {
     if (!siteInfo.logoDataUrl) return;
@@ -59,7 +81,6 @@ export async function downloadSafetyPptx(
   const addSlideChrome = (slide: PptxGenJS.Slide, pageNum: number, sectionTitle: string) => {
     slide.background = { color: 'FFFFFF' };
 
-    // Top Navy Header Bar
     slide.addShape(pptx.ShapeType.rect, {
       x: 0,
       y: 0,
@@ -69,52 +90,48 @@ export async function downloadSafetyPptx(
       line: { color: '0F172A', width: 0 },
     });
 
-    // Safety accent underline
     slide.addShape(pptx.ShapeType.rect, {
       x: 0,
       y: 0.62,
       w: 10,
       h: 0.06,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
 
-    // Section title left
     slide.addText(sectionTitle, {
       x: 0.45,
       y: 0.12,
-      w: 6.8,
+      w: 6.95,
       h: 0.4,
       fontFace: FONT,
-      fontSize: 15.5,
+      fontSize: 15,
       bold: true,
       color: 'FFFFFF',
       valign: 'middle',
     });
 
-    // Hazard type indicator right
     slide.addShape(pptx.ShapeType.rect, {
-      x: 7.75,
+      x: 7.55,
       y: 0.14,
-      w: 1.85,
+      w: 2.05,
       h: 0.34,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
-    slide.addText(`${c.hazard_type} 예방교육`, {
-      x: 7.75,
+    slide.addText(`${sourceBrand.shortLabel} · ${c.hazard_type}`, {
+      x: 7.55,
       y: 0.14,
-      w: 1.85,
+      w: 2.05,
       h: 0.34,
       fontFace: FONT,
-      fontSize: 10.5,
+      fontSize: 9.8,
       bold: true,
       color: 'FFFFFF',
       align: 'center',
       valign: 'middle',
     });
 
-    // Footer divider & metadata
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.45,
       y: 5.18,
@@ -127,15 +144,16 @@ export async function downloadSafetyPptx(
     const textStartX = siteInfo.logoDataUrl ? 1.62 : 0.45;
     addLogoIfPresent(slide, 0.45, 5.23, 1.05, 0.3);
 
+    const sourceRefLabel = c.source_ref || sourceBrand.defaultSourceRef;
     slide.addText(
-      `현장: ${siteLabel}  |  ${material.selectedIndustry} · ${material.selectedWorkType}  |  ${dateLabel}`,
+      `현장: ${siteLabel}  |  출처: ${sourceRefLabel}  |  ${dateLabel}`,
       {
         x: textStartX,
         y: 5.24,
         w: 8.4 - textStartX,
         h: 0.28,
         fontFace: FONT,
-        fontSize: 9,
+        fontSize: 8.6,
         color: '64748B',
         valign: 'middle',
       }
@@ -167,8 +185,8 @@ export async function downloadSafetyPptx(
       y: 0,
       w: 10,
       h: 0.22,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
 
     slide.addShape(pptx.ShapeType.rect, {
@@ -180,14 +198,13 @@ export async function downloadSafetyPptx(
       line: { color: '1E293B', width: 0 },
     });
 
-    // Optional Seasonal Alert Ribbon at top-left
-    let currentY = 0.52;
+    let currentY = 0.48;
     if (season.id !== 'always') {
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.55,
         y: currentY,
         w: 6.65,
-        h: 0.42,
+        h: 0.4,
         fill: { color: season.pptxBadge },
         line: { color: season.pptxBadge, width: 0 },
       });
@@ -195,32 +212,32 @@ export async function downloadSafetyPptx(
         x: 0.65,
         y: currentY,
         w: 6.45,
-        h: 0.42,
+        h: 0.4,
         fontFace: FONT,
-        fontSize: 9.2,
+        fontSize: 9,
         bold: true,
         color: 'FFFFFF',
         valign: 'middle',
       });
-      currentY += 0.52;
+      currentY += 0.48;
     }
 
-    // Industry / Work Type Header Tag
+    // Source Recognition Badge + Industry / Work Type Tag
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.55,
       y: currentY,
-      w: 4.9,
+      w: 6.65,
       h: 0.38,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
-    slide.addText(`${material.selectedIndustry}  |  ${material.selectedWorkType}`, {
+    slide.addText(`[${sourceBadgeText}]   ${material.selectedIndustry} · ${material.selectedWorkType}`, {
       x: 0.65,
       y: currentY,
-      w: 4.7,
+      w: 6.45,
       h: 0.38,
       fontFace: FONT,
-      fontSize: 11.5,
+      fontSize: 10.8,
       bold: true,
       color: 'FFFFFF',
       valign: 'middle',
@@ -250,40 +267,40 @@ export async function downloadSafetyPptx(
       currentY += 0.36;
     }
 
-    // Main Accident Title
     slide.addText(c.title, {
       x: 0.55,
       y: currentY,
       w: 6.7,
       h: 1.45,
       fontFace: FONT,
-      fontSize: season.id !== 'always' ? 22 : 24,
+      fontSize: season.id !== 'always' ? 21 : 23,
       bold: true,
       color: 'FFFFFF',
       valign: 'top',
       breakLine: true,
     });
 
-    // Mode & Equipment subtitle
-    slide.addText(`중점 기인물: ${c.equipment}   |   교육 구성: ${material.perspectiveLabel}`, {
-      x: 0.55,
-      y: 3.2,
-      w: 6.7,
-      h: 0.36,
-      fontFace: FONT,
-      fontSize: 10.8,
-      color: 'CBD5E1',
-      valign: 'middle',
-    });
+    slide.addText(
+      `중점 기인물: ${c.equipment}   |   대책 기준: ${measuresAttributionLabel}`,
+      {
+        x: 0.55,
+        y: 3.22,
+        w: 6.7,
+        h: 0.34,
+        fontFace: FONT,
+        fontSize: 10.2,
+        color: 'CBD5E1',
+        valign: 'middle',
+      }
+    );
 
-    // Worker Slogan Highlight Box (with optional bilingual slogan)
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.55,
       y: 3.68,
       w: 6.65,
       h: translations ? 1.24 : 0.94,
       fill: { color: '1E293B' },
-      line: { color: theme.pptxPrimary, width: 1.5 },
+      line: { color: primaryAccentPptx, width: 1.5 },
     });
     slide.addText(
       translations ? `근로자 핵심 안전 구호 (${langLabel} 병기)` : '근로자 핵심 안전 구호',
@@ -304,7 +321,7 @@ export async function downloadSafetyPptx(
       w: 6.3,
       h: 0.42,
       fontFace: FONT,
-      fontSize: 14.5,
+      fontSize: 14,
       bold: true,
       color: 'FFFFFF',
       valign: 'middle',
@@ -316,14 +333,13 @@ export async function downloadSafetyPptx(
         w: 6.3,
         h: 0.4,
         fontFace: FONT,
-        fontSize: 10.5,
+        fontSize: 10.2,
         bold: true,
         color: 'FDE68A',
         valign: 'top',
       });
     }
 
-    // Right panel metadata block + Logo
     slide.addText('중대재해 예방\n현장 안전교육', {
       x: 7.8,
       y: 0.65,
@@ -341,8 +357,8 @@ export async function downloadSafetyPptx(
       y: 1.62,
       w: 1.9,
       h: 0.03,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
 
     const metaRows = [
@@ -390,52 +406,74 @@ export async function downloadSafetyPptx(
   }
 
   // =========================================================================
-  // SLIDE 2: 사고 재구성 (3줄 요약 + 4단계 타임라인)
+  // SLIDE 2: 재해개요 원문 (Read-Only) + 4단계 메커니즘
   // =========================================================================
   {
     const slide = pptx.addSlide();
-    addSlideChrome(slide, 2, '01. 중대재해 사고 재구성 및 발생 경위');
+    addSlideChrome(slide, 2, '01. 중대재해 사고 개요 [공단 공식 원문] 및 발생 메커니즘');
+
+    const rawOverview = getCaseOverviewVerbatim(c);
+    const fit = fitFactualOverviewForA4(rawOverview, 0, false, 300);
+    const overviewPt = fit.tierLabel === '8.8pt' ? 9.5 : fit.tierLabel === '9.5pt' ? 10.2 : 10.8;
 
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.45,
-      y: 0.85,
+      y: 0.84,
       w: 9.1,
-      h: 1.62,
-      fill: { color: 'F8FAFC' },
-      line: { color: 'CBD5E1', width: 0.75 },
+      h: c.disclaimer ? 1.72 : 1.62,
+      fill: { color: sourceBrand.pptxSoftBg },
+      line: { color: primaryAccentPptx, width: 0.9 },
     });
 
-    slide.addText(`사고 개요 3줄 요약  (${c.equipment})`, {
+    const overviewHeader = fit.isExcerpted
+      ? `[공단 공식 원문 · 원문 일부 발췌]  기인물: ${c.equipment}`
+      : `[공단 공식 원문]  기인물: ${c.equipment}`;
+
+    slide.addText(overviewHeader, {
       x: 0.62,
-      y: 0.94,
-      w: 8.7,
-      h: 0.28,
+      y: 0.92,
+      w: 8.75,
+      h: 0.26,
       fontFace: FONT,
-      fontSize: 11.5,
+      fontSize: 10.5,
       bold: true,
-      color: theme.pptxPrimary,
+      color: primaryAccentPptx,
     });
 
-    c.summary_3lines.forEach((line, idx) => {
-      slide.addText(`${idx + 1}. ${line}`, {
+    slide.addText(fit.displayText, {
+      x: 0.62,
+      y: 1.2,
+      w: 8.75,
+      h: c.disclaimer ? 1.02 : 1.16,
+      fontFace: FONT,
+      fontSize: overviewPt,
+      color: '0F172A',
+      valign: 'top',
+    });
+
+    if (c.disclaimer) {
+      slide.addText(c.disclaimer, {
         x: 0.62,
-        y: 1.24 + idx * 0.39,
+        y: 2.26,
         w: 8.75,
-        h: 0.37,
+        h: 0.24,
         fontFace: FONT,
-        fontSize: 10.5,
-        color: '1E293B',
+        fontSize: 8.5,
+        color: '7F1D1D',
         valign: 'middle',
       });
-    });
+    }
+
+    const timelineTitleY = c.disclaimer ? 2.68 : 2.62;
+    const timelineCardY = c.disclaimer ? 3.02 : 2.98;
 
     slide.addText('사고 발생 4단계 메커니즘', {
       x: 0.45,
-      y: 2.65,
+      y: timelineTitleY,
       w: 9.1,
-      h: 0.3,
+      h: 0.28,
       fontFace: FONT,
-      fontSize: 12.5,
+      fontSize: 12,
       bold: true,
       color: '0F172A',
     });
@@ -448,7 +486,7 @@ export async function downloadSafetyPptx(
 
       slide.addShape(pptx.ShapeType.rect, {
         x: xPos,
-        y: 3.02,
+        y: timelineCardY,
         w: cardW,
         h: 1.98,
         fill: { color: isLast ? 'ECFDF5' : 'FFFFFF' },
@@ -457,7 +495,7 @@ export async function downloadSafetyPptx(
 
       slide.addShape(pptx.ShapeType.rect, {
         x: xPos,
-        y: 3.02,
+        y: timelineCardY,
         w: cardW,
         h: 0.36,
         fill: { color: isLast ? '047857' : '1E293B' },
@@ -466,11 +504,11 @@ export async function downloadSafetyPptx(
 
       slide.addText(isLast ? `${step.step} · 예방 핵심` : `${step.step} · ${step.label}`, {
         x: xPos + 0.08,
-        y: 3.02,
+        y: timelineCardY,
         w: cardW - 0.16,
         h: 0.36,
         fontFace: FONT,
-        fontSize: 10.5,
+        fontSize: 10,
         bold: true,
         color: 'FFFFFF',
         valign: 'middle',
@@ -478,11 +516,11 @@ export async function downloadSafetyPptx(
 
       slide.addText(step.detail, {
         x: xPos + 0.12,
-        y: 3.48,
+        y: timelineCardY + 0.44,
         w: cardW - 0.24,
-        h: 1.42,
+        h: 1.44,
         fontFace: FONT,
-        fontSize: 10.5,
+        fontSize: step.detail.length > 70 ? 9.2 : 10,
         color: '1E293B',
         valign: 'top',
       });
@@ -490,29 +528,32 @@ export async function downloadSafetyPptx(
       if (!isLast) {
         slide.addShape(pptx.ShapeType.rightArrow, {
           x: xPos + cardW + 0.05,
-          y: 3.88,
+          y: timelineCardY + 0.86,
           w: 0.16,
           h: 0.24,
-          fill: { color: theme.pptxPrimary },
-          line: { color: theme.pptxPrimary, width: 0 },
+          fill: { color: primaryAccentPptx },
+          line: { color: primaryAccentPptx, width: 0 },
         });
       }
     });
   }
 
   // =========================================================================
-  // SLIDE 3: 원인 분석 또는 O/X 비교
+  // SLIDE 3: SIF 고위험작업·유발요인(원문 고정) / 원인 분석 / O·X 비교
   // =========================================================================
   {
     const slide = pptx.addSlide();
     const showOX = material.perspectiveMode === 'ox_compare';
+    const isSif = c.source_type === 'SIF';
 
     addSlideChrome(
       slide,
       3,
       showOX
         ? '02. 잘못된 현장 관행(X) vs 안전 원칙(O) 대조'
-        : '02. 직접원인 및 관리적 근본원인 분석'
+        : isSif
+          ? '02. SIF 고위험작업·재해유발요인 [공단 공식 원문] 분석'
+          : '02. 핵심 위험요인 및 관리적 근본원인 분석'
     );
 
     if (showOX) {
@@ -543,7 +584,7 @@ export async function downloadSafetyPptx(
           w: 4.0,
           h: 0.92,
           fontFace: FONT,
-          fontSize: 11.5,
+          fontSize: 11.2,
           bold: true,
           color: '1E293B',
           valign: 'top',
@@ -582,7 +623,7 @@ export async function downloadSafetyPptx(
           w: 4.0,
           h: 0.92,
           fontFace: FONT,
-          fontSize: 11.5,
+          fontSize: 11.2,
           bold: true,
           color: '1E293B',
           valign: 'top',
@@ -607,6 +648,157 @@ export async function downloadSafetyPptx(
           valign: 'middle',
         });
       });
+    } else if (isSif) {
+      // Dedicated SIF Read-Only Facts Frame
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: 0.9,
+        w: 4.45,
+        h: 4.05,
+        fill: { color: 'FFFBEB' },
+        line: { color: 'D97706', width: 1.3 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: 0.9,
+        w: 4.45,
+        h: 0.44,
+        fill: { color: 'D97706' },
+        line: { color: 'D97706', width: 0 },
+      });
+      slide.addText('SIF 고위험작업 및 재해유발요인 [공단 원문]', {
+        x: 0.62,
+        y: 0.9,
+        w: 4.1,
+        h: 0.44,
+        fontFace: FONT,
+        fontSize: 11.5,
+        bold: true,
+        color: 'FFFFFF',
+        valign: 'middle',
+      });
+
+      slide.addText('고위험작업·상황 (Potential)', {
+        x: 0.65,
+        y: 1.5,
+        w: 4.05,
+        h: 0.25,
+        fontFace: FONT,
+        fontSize: 10,
+        bold: true,
+        color: '92400E',
+      });
+      slide.addText(c.high_risk_work || c.work_type, {
+        x: 0.65,
+        y: 1.78,
+        w: 4.05,
+        h: 0.72,
+        fontFace: FONT,
+        fontSize: 10.8,
+        bold: true,
+        color: '0F172A',
+        valign: 'top',
+      });
+
+      slide.addText('재해유발요인 (Precursor)', {
+        x: 0.65,
+        y: 2.62,
+        w: 4.05,
+        h: 0.25,
+        fontFace: FONT,
+        fontSize: 10,
+        bold: true,
+        color: '92400E',
+      });
+      slide.addText(c.hazard_factor || c.direct_causes[0], {
+        x: 0.65,
+        y: 2.9,
+        w: 4.05,
+        h: 1.85,
+        fontFace: FONT,
+        fontSize: 10.5,
+        color: '0F172A',
+        valign: 'top',
+      });
+
+      // Right side: Category & O/X contrast
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 5.1,
+        y: 0.9,
+        w: 4.45,
+        h: 2.25,
+        fill: { color: 'FFFFFF' },
+        line: { color: '334155', width: 1 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 5.1,
+        y: 0.9,
+        w: 4.45,
+        h: 0.44,
+        fill: { color: '1E293B' },
+        line: { color: '1E293B', width: 0 },
+      });
+      slide.addText('산재업종·기인물 분류 및 관리 포인트', {
+        x: 5.27,
+        y: 0.9,
+        w: 4.1,
+        h: 0.44,
+        fontFace: FONT,
+        fontSize: 11.5,
+        bold: true,
+        color: 'FFFFFF',
+        valign: 'middle',
+      });
+      slide.addText(`• 공종·업종: ${c.process || c.industry}\n• 핵심 기인물: ${c.equipment}\n• 출처: ${c.source_ref}`, {
+        x: 5.27,
+        y: 1.48,
+        w: 4.12,
+        h: 1.5,
+        fontFace: FONT,
+        fontSize: 10.2,
+        color: '1E293B',
+        valign: 'top',
+      });
+
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 5.1,
+        y: 3.32,
+        w: 4.45,
+        h: 1.63,
+        fill: { color: 'F8FAFC' },
+        line: { color: 'CBD5E1', width: 0.75 },
+      });
+      slide.addText('현장 관행 vs 안전 원칙 핵심 대비', {
+        x: 5.27,
+        y: 3.42,
+        w: 4.1,
+        h: 0.25,
+        fontFace: FONT,
+        fontSize: 10.5,
+        bold: true,
+        color: '0F172A',
+      });
+      slide.addText(`X  ${c.ox_comparison[0].wrong}`, {
+        x: 5.27,
+        y: 3.72,
+        w: 4.1,
+        h: 0.5,
+        fontFace: FONT,
+        fontSize: 9.8,
+        color: 'B91C1C',
+        valign: 'top',
+      });
+      slide.addText(`O  ${c.ox_comparison[0].right}`, {
+        x: 5.27,
+        y: 4.26,
+        w: 4.1,
+        h: 0.58,
+        fontFace: FONT,
+        fontSize: 9.8,
+        bold: true,
+        color: '15803D',
+        valign: 'top',
+      });
     } else {
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.45,
@@ -614,23 +806,23 @@ export async function downloadSafetyPptx(
         w: 4.45,
         h: 4.05,
         fill: { color: 'FFFFFF' },
-        line: { color: theme.pptxPrimary, width: 1.2 },
+        line: { color: primaryAccentPptx, width: 1.2 },
       });
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.45,
         y: 0.9,
         w: 4.45,
         h: 0.44,
-        fill: { color: theme.pptxPrimary },
-        line: { color: theme.pptxPrimary, width: 0 },
+        fill: { color: primaryAccentPptx },
+        line: { color: primaryAccentPptx, width: 0 },
       });
-      slide.addText('직접 원인 (불안전한 상태·행동)', {
+      slide.addText('핵심 점검 위험요인 (불안전한 상태·행동)', {
         x: 0.62,
         y: 0.9,
         w: 4.1,
         h: 0.44,
         fontFace: FONT,
-        fontSize: 12.5,
+        fontSize: 12,
         bold: true,
         color: 'FFFFFF',
         valign: 'middle',
@@ -646,7 +838,7 @@ export async function downloadSafetyPptx(
           fill: { color: theme.pptxSoftBg },
           line: { color: 'E2E8F0', width: 0.5 },
         });
-        slide.addText(`원인 0${idx + 1}`, {
+        slide.addText(`위험요인 0${idx + 1}`, {
           x: 0.74,
           y: yPos + 0.08,
           w: 3.85,
@@ -654,7 +846,7 @@ export async function downloadSafetyPptx(
           fontFace: FONT,
           fontSize: 9.5,
           bold: true,
-          color: theme.pptxPrimary,
+          color: primaryAccentPptx,
         });
         slide.addText(cause, {
           x: 0.74,
@@ -662,7 +854,7 @@ export async function downloadSafetyPptx(
           w: 3.85,
           h: 0.58,
           fontFace: FONT,
-          fontSize: 10.5,
+          fontSize: 10.2,
           color: '0F172A',
           valign: 'top',
         });
@@ -684,13 +876,13 @@ export async function downloadSafetyPptx(
         fill: { color: '1E293B' },
         line: { color: '1E293B', width: 0 },
       });
-      slide.addText('근본 원인 (관리적·시스템 미흡)', {
+      slide.addText('관리적 근본 원인', {
         x: 5.27,
         y: 0.9,
         w: 4.1,
         h: 0.44,
         fontFace: FONT,
-        fontSize: 12.5,
+        fontSize: 12,
         bold: true,
         color: 'FFFFFF',
         valign: 'middle',
@@ -753,119 +945,112 @@ export async function downloadSafetyPptx(
   }
 
   // =========================================================================
-  // SLIDE 4: 핵심 예방대책 (다국어 병기 지원) 및 유사공정 경고
+  // SLIDE 4: 예방대책 / 위험성감소대책 (편집 반영 + 출처 표기 자동 전환) 및 유사공정
   // =========================================================================
   {
     const slide = pptx.addSlide();
+    const slide4TitleBase =
+      c.source_type === 'SIF' ? '03. SIF 위험성감소대책' : '03. 핵심 예방대책';
     addSlideChrome(
       slide,
       4,
-      translations
-        ? `03. 4대 핵심 예방대책 (${langLabel} 병기) 및 유사공정 주의 사례`
-        : '03. 4대 핵심 예방대책 및 유사공정 주의 사례'
+      `${slide4TitleBase} [${measuresAttributionLabel}]${translations ? ` (${langLabel})` : ''}`
     );
 
     const leftW = relatedCase ? 5.95 : 9.1;
+    const measures = c.preventive_measures.slice(0, 6);
+    const count = Math.max(1, measures.length);
+    const totalAvailH = 3.68;
+    const gap = count >= 5 ? 0.06 : 0.08;
+    const boxH = Math.min(0.95, (totalAvailH - gap * (count - 1)) / count);
 
-    c.preventive_measures.forEach((measure, idx) => {
-      const yPos = 0.84 + idx * 0.92;
-      const boxH = 0.84;
+    measures.forEach((measure, idx) => {
+      const yPos = 0.84 + idx * (boxH + gap);
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.45,
         y: yPos,
         w: leftW,
         h: boxH,
         fill: { color: 'FFFFFF' },
-        line: { color: 'CBD5E1', width: 0.75 },
+        line: { color: isMeasuresEdited ? 'D97706' : 'CBD5E1', width: 0.75 },
       });
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.45,
         y: yPos,
-        w: 0.52,
+        w: 0.5,
         h: boxH,
-        fill: { color: theme.pptxPrimary },
-        line: { color: theme.pptxPrimary, width: 0 },
+        fill: { color: primaryAccentPptx },
+        line: { color: primaryAccentPptx, width: 0 },
       });
       slide.addText(`0${idx + 1}`, {
         x: 0.45,
         y: yPos,
-        w: 0.52,
+        w: 0.5,
         h: boxH,
         fontFace: FONT,
-        fontSize: 13,
+        fontSize: count >= 5 ? 11 : 12.5,
         bold: true,
         color: 'FFFFFF',
         align: 'center',
         valign: 'middle',
       });
 
-      if (translations) {
-        slide.addText(measure, {
-          x: 1.06,
-          y: yPos + 0.05,
-          w: leftW - 0.7,
-          h: 0.4,
-          fontFace: FONT,
-          fontSize: 9.8,
-          bold: true,
-          color: '0F172A',
-          valign: 'top',
-        });
+      const hasTransRow = Boolean(translations && translations.measures[idx] && count <= 4);
+      slide.addText(measure, {
+        x: 1.05,
+        y: hasTransRow ? yPos + 0.05 : yPos + 0.04,
+        w: leftW - 0.7,
+        h: hasTransRow ? boxH * 0.54 : boxH - 0.08,
+        fontFace: FONT,
+        fontSize: count >= 5 ? 9.6 : hasTransRow ? 10.2 : 11,
+        bold: true,
+        color: '0F172A',
+        valign: 'middle',
+      });
+
+      if (hasTransRow && translations) {
         slide.addText(translations.measures[idx], {
-          x: 1.06,
-          y: yPos + 0.45,
+          x: 1.05,
+          y: yPos + boxH * 0.55,
           w: leftW - 0.7,
-          h: 0.35,
+          h: boxH * 0.4,
           fontFace: FONT,
-          fontSize: 8.6,
-          color: theme.pptxPrimary,
+          fontSize: 8.8,
+          color: primaryAccentPptx,
           valign: 'top',
-        });
-      } else {
-        slide.addText(measure, {
-          x: 1.08,
-          y: yPos + 0.06,
-          w: leftW - 0.74,
-          h: 0.72,
-          fontFace: FONT,
-          fontSize: 10.5,
-          bold: true,
-          color: '0F172A',
-          valign: 'middle',
         });
       }
     });
 
-    // Legal reference strip
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.45,
-      y: 4.56,
+      y: 4.64,
       w: leftW,
-      h: 0.48,
+      h: 0.4,
       fill: { color: 'F1F5F9' },
-      line: { color: 'CBD5E1', width: 0.75 },
+      line: { color: 'CBD5E1', width: 0.5 },
     });
-    slide.addText(`관련 법령: ${c.legal_ref}`, {
-      x: 0.6,
-      y: 4.56,
-      w: leftW - 0.3,
-      h: 0.48,
+    slide.addText(`관련 법령: ${c.legal_ref}   |   대책 출처: ${measuresAttributionLabel}`, {
+      x: 0.58,
+      y: 4.64,
+      w: leftW - 0.25,
+      h: 0.4,
       fontFace: FONT,
-      fontSize: 9.5,
+      fontSize: 9.2,
       bold: true,
       color: '334155',
       valign: 'middle',
     });
 
-    // Cross-process warning box
     if (relatedCase) {
+      const relatedSummary = formatCrossProcessSummaryVerbatim(relatedCase);
       slide.addShape(pptx.ShapeType.rect, {
         x: 6.6,
         y: 0.84,
         w: 2.95,
         h: 4.2,
         fill: { color: 'FFFBEB' },
-        line: { color: 'D97706', width: 1.2 },
+        line: { color: 'F59E0B', width: 1.2 },
       });
       slide.addShape(pptx.ShapeType.rect, {
         x: 6.6,
@@ -881,148 +1066,152 @@ export async function downloadSafetyPptx(
         w: 2.7,
         h: 0.42,
         fontFace: FONT,
-        fontSize: 11,
+        fontSize: 10.8,
         bold: true,
         color: 'FFFFFF',
         valign: 'middle',
       });
 
-      slide.addText(`${relatedCase.industry} · ${relatedCase.hazard_type} · ${relatedCase.work_type}`, {
-        x: 6.74,
-        y: 1.36,
-        w: 2.66,
-        h: 0.32,
-        fontFace: FONT,
-        fontSize: 9.2,
-        bold: true,
-        color: '92400E',
-      });
+      slide.addText(
+        `${relatedCase.industry}  |  ${relatedCase.hazard_type}\n${relatedCase.work_type}`,
+        {
+          x: 6.74,
+          y: 1.34,
+          w: 2.68,
+          h: 0.42,
+          fontFace: FONT,
+          fontSize: 9,
+          bold: true,
+          color: '92400E',
+        }
+      );
 
       slide.addText(relatedCase.title, {
         x: 6.74,
-        y: 1.72,
-        w: 2.66,
-        h: 0.78,
+        y: 1.8,
+        w: 2.68,
+        h: 0.68,
         fontFace: FONT,
-        fontSize: 10.8,
+        fontSize: 10.2,
         bold: true,
         color: '0F172A',
         valign: 'top',
       });
 
-      slide.addText(relatedCase.summary_3lines.filter(Boolean).join(' '), {
+      slide.addText(relatedSummary.text, {
         x: 6.74,
-        y: 2.54,
-        w: 2.66,
-        h: 1.28,
+        y: 2.52,
+        w: 2.68,
+        h: 1.4,
         fontFace: FONT,
-        fontSize: 9.0,
+        fontSize: 9,
         color: '334155',
         valign: 'top',
       });
 
       slide.addShape(pptx.ShapeType.rect, {
-        x: 6.74,
-        y: 3.92,
-        w: 2.66,
-        h: 0.98,
+        x: 6.72,
+        y: 4.0,
+        w: 2.71,
+        h: 0.92,
         fill: { color: 'FFFFFF' },
         line: { color: 'FCD34D', width: 0.75 },
       });
-      slide.addText(`교훈: ${relatedCase.preventive_measures[0]}`, {
-        x: 6.84,
-        y: 3.98,
-        w: 2.46,
-        h: 0.86,
+      slide.addText(`핵심 교훈: ${relatedCase.preventive_measures[0] || ''}`, {
+        x: 6.8,
+        y: 4.06,
+        w: 2.55,
+        h: 0.8,
         fontFace: FONT,
-        fontSize: 9.5,
+        fontSize: 8.8,
         bold: true,
         color: '78350F',
-        valign: 'middle',
+        valign: 'top',
       });
     }
   }
 
   // =========================================================================
-  // SLIDE 5: 작업 전 5분 TBM 체크리스트 & KYT 퀴즈
+  // SLIDE 5: 5분 TBM 체크리스트 (편집 반영) + KYT 퀴즈 + 구호
   // =========================================================================
   {
     const slide = pptx.addSlide();
-    addSlideChrome(slide, 5, '04. 작업 전 5분 TBM 체크리스트 및 위험예지(KYT) 퀴즈');
+    const tbmAttr = isTbmEdited ? '공단 권고안 기반 · 현장 맞춤 반영' : '공단 원문 가이드';
+    addSlideChrome(slide, 5, `04. 작업 전 5분 TBM 체크리스트 [${tbmAttr}] 및 KYT 퀴즈`);
 
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.45,
       y: 0.86,
-      w: 5.0,
-      h: 4.18,
+      w: 5.25,
+      h: 4.15,
       fill: { color: 'FFFFFF' },
       line: { color: 'CBD5E1', width: 0.75 },
     });
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.45,
       y: 0.86,
-      w: 5.0,
+      w: 5.25,
       h: 0.42,
       fill: { color: '0F172A' },
       line: { color: '0F172A', width: 0 },
     });
-    slide.addText('작업 전 5분 TBM 필수 점검 항목 (5개)', {
-      x: 0.62,
+    slide.addText(`작업 전 5분 TBM 필수 점검 항목 (${tbmAttr})`, {
+      x: 0.6,
       y: 0.86,
-      w: 4.65,
+      w: 4.95,
       h: 0.42,
       fontFace: FONT,
-      fontSize: 11.5,
+      fontSize: 10.8,
       bold: true,
       color: 'FFFFFF',
       valign: 'middle',
     });
 
-    c.tbm_checklist.forEach((item, idx) => {
-      const yPos = 1.4 + idx * 0.69;
+    const tbmItems = c.tbm_checklist.slice(0, 7);
+    const tbmRowStep = Math.min(0.68, 3.55 / Math.max(1, tbmItems.length));
+    tbmItems.forEach((item, idx) => {
+      const yPos = 1.38 + idx * tbmRowStep;
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.62,
         y: yPos + 0.08,
-        w: 0.24,
-        h: 0.24,
+        w: 0.2,
+        h: 0.2,
         fill: { color: 'FFFFFF' },
-        line: { color: theme.pptxPrimary, width: 1.5 },
+        line: { color: primaryAccentPptx, width: 1.3 },
       });
       slide.addText(`${idx + 1}. ${item}`, {
-        x: 0.96,
+        x: 0.92,
         y: yPos,
-        w: 4.35,
-        h: 0.6,
+        w: 4.65,
+        h: tbmRowStep - 0.04,
         fontFace: FONT,
-        fontSize: 10.2,
+        fontSize: tbmItems.length >= 6 ? 9.4 : 10.2,
         color: '1E293B',
-        valign: 'top',
+        valign: 'middle',
       });
     });
 
-    // Right: KYT Field Quiz
-    const quizH = translations ? 2.86 : 3.16;
     slide.addShape(pptx.ShapeType.rect, {
-      x: 5.65,
+      x: 5.9,
       y: 0.86,
-      w: 3.9,
-      h: quizH,
+      w: 3.65,
+      h: 2.95,
       fill: { color: theme.pptxSoftBg },
-      line: { color: theme.pptxPrimary, width: 1.2 },
+      line: { color: primaryAccentPptx, width: 1 },
     });
     slide.addShape(pptx.ShapeType.rect, {
-      x: 5.65,
+      x: 5.9,
       y: 0.86,
-      w: 3.9,
-      h: 0.4,
-      fill: { color: theme.pptxPrimary },
-      line: { color: theme.pptxPrimary, width: 0 },
+      w: 3.65,
+      h: 0.42,
+      fill: { color: primaryAccentPptx },
+      line: { color: primaryAccentPptx, width: 0 },
     });
     slide.addText('현장 위험예지(KYT) 토의 질문', {
-      x: 5.8,
+      x: 6.05,
       y: 0.86,
-      w: 3.6,
-      h: 0.4,
+      w: 3.35,
+      h: 0.42,
       fontFace: FONT,
       fontSize: 11.2,
       bold: true,
@@ -1031,12 +1220,12 @@ export async function downloadSafetyPptx(
     });
 
     slide.addText(`Q. ${c.kyt_quiz.question}`, {
-      x: 5.8,
-      y: 1.34,
-      w: 3.6,
-      h: 0.65,
+      x: 6.05,
+      y: 1.36,
+      w: 3.35,
+      h: 0.82,
       fontFace: FONT,
-      fontSize: 10.2,
+      fontSize: 9.8,
       bold: true,
       color: '0F172A',
       valign: 'top',
@@ -1044,77 +1233,75 @@ export async function downloadSafetyPptx(
 
     c.kyt_quiz.answers.forEach((ans, idx) => {
       slide.addText(`✔ ${idx + 1}) ${ans}`, {
-        x: 5.8,
-        y: 2.04 + idx * (translations ? 0.52 : 0.58),
-        w: 3.6,
-        h: 0.5,
+        x: 6.05,
+        y: 2.24 + idx * 0.5,
+        w: 3.35,
+        h: 0.46,
         fontFace: FONT,
-        fontSize: 9.4,
-        color: '1E293B',
+        fontSize: 9,
+        color: '334155',
         valign: 'top',
       });
     });
 
-    // Right Bottom: Worker Slogan callout (with bilingual slogan & seasonal reminder if active)
-    const sloganY = translations ? 3.84 : 4.14;
-    const sloganH = translations ? 1.2 : 0.9;
     slide.addShape(pptx.ShapeType.rect, {
-      x: 5.65,
-      y: sloganY,
-      w: 3.9,
-      h: sloganH,
+      x: 5.9,
+      y: 3.94,
+      w: 3.65,
+      h: 1.07,
       fill: { color: '0F172A' },
-      line: { color: '0F172A', width: 0 },
+      line: { color: primaryAccentPptx, width: 1.2 },
     });
     slide.addText(
-      translations ? `안전구호 (${langLabel} 병기)` : '작업 전 다 함께 외치는 안전구호',
+      translations ? `작업 전 다 함께 복창 (${langLabel})` : '작업 전 다 함께 외치는 안전구호',
       {
-        x: 5.8,
-        y: sloganY + 0.06,
-        w: 3.6,
+        x: 6.05,
+        y: 4.0,
+        w: 3.35,
         h: 0.2,
         fontFace: FONT,
-        fontSize: 8.5,
+        fontSize: 8.8,
         bold: true,
         color: 'FACC15',
       }
     );
     slide.addText(`“${c.worker_slogan}”`, {
-      x: 5.8,
-      y: sloganY + 0.27,
-      w: 3.6,
-      h: 0.42,
+      x: 6.05,
+      y: 4.2,
+      w: 3.35,
+      h: translations ? 0.4 : 0.72,
       fontFace: FONT,
-      fontSize: 10.5,
+      fontSize: translations ? 10 : 11,
       bold: true,
       color: 'FFFFFF',
       valign: 'middle',
     });
     if (translations) {
       slide.addText(translations.slogan, {
-        x: 5.8,
-        y: sloganY + 0.72,
-        w: 3.6,
-        h: 0.42,
+        x: 6.05,
+        y: 4.6,
+        w: 3.35,
+        h: 0.36,
         fontFace: FONT,
-        fontSize: 8.8,
+        fontSize: 8.4,
+        bold: true,
         color: 'FDE68A',
         valign: 'top',
       });
     } else if (seasonTrans) {
       slide.addText(seasonTrans, {
-        x: 5.8,
-        y: sloganY + 0.68,
-        w: 3.6,
-        h: 0.2,
+        x: 6.05,
+        y: 4.68,
+        w: 3.35,
+        h: 0.28,
         fontFace: FONT,
-        fontSize: 7.5,
+        fontSize: 8,
         color: 'CBD5E1',
       });
     }
   }
 
-  const fileName = `안전교육_${sanitizeFileName(material.selectedWorkType)}_${dateLabel}.pptx`;
+  const fileName = `안전교육자료_${sanitizeFileName(material.selectedIndustry)}_${sanitizeFileName(material.selectedWorkType)}_${dateLabel}.pptx`;
   await pptx.writeFile({ fileName });
   return fileName;
 }

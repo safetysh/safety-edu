@@ -5,6 +5,7 @@ interface PictogramProps {
   hazardType: HazardType;
   size?: number;
   className?: string;
+  inkSaver?: boolean;
 }
 
 type PictogramCategory =
@@ -41,6 +42,7 @@ export const HazardPictogram: React.FC<PictogramProps> = ({
   hazardType,
   size = 64,
   className = '',
+  inkSaver = false,
 }) => {
   const category = resolvePictogramCategory(hazardType);
 
@@ -58,7 +60,7 @@ export const HazardPictogram: React.FC<PictogramProps> = ({
       {/* Safety Warning Triangle */}
       <path
         d="M40 7L74 68H6L40 7Z"
-        fill="#FACC15"
+        fill={inkSaver ? '#FFFFFF' : '#FACC15'}
         stroke="#18181B"
         strokeWidth="4.5"
         strokeLinejoin="round"
@@ -270,6 +272,8 @@ interface MechanismFlowProps {
   timeline: [TimelineStep, TimelineStep, TimelineStep, TimelineStep];
   theme: SafetyThemeConfig;
   compact?: boolean;
+  inkSaver?: boolean;
+  accentHex?: string;
 }
 
 function formatTimelineBadge(step: string, label: string): string {
@@ -285,50 +289,76 @@ function formatTimelineBadge(step: string, label: string): string {
   return `${s} · ${l}`;
 }
 
-/**
- * Structured 4-stage industrial accident mechanism flow diagram with crisp vector arrows.
- * Displays a single deduplicated top badge + clean body text (no repeated subheading)
- * and marks the final card with '예방 핵심'.
- */
 export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
   timeline,
   theme,
   compact = false,
+  inkSaver = false,
+  accentHex,
 }) => {
+  const arrowColor = inkSaver ? '#0F172A' : accentHex || theme.primaryHex;
+
   return (
     <div className="w-full keep-all">
       <div className="grid grid-cols-4 gap-2 items-stretch">
         {timeline.map((stage, idx) => {
           const isFinal = idx === timeline.length - 1;
           const badgeTitle = formatTimelineBadge(stage.step, stage.label);
+          const detailLen = (stage.detail || '').length;
+          const textClass = compact
+            ? detailLen > 55
+              ? 'text-[9.4px]'
+              : 'text-[10px]'
+            : detailLen > 55
+              ? 'text-[10px]'
+              : 'text-[10.6px]';
+
           return (
             <div key={`${stage.step}-${idx}`} className="relative flex items-stretch">
               <div
                 className={`flex-1 flex flex-col justify-start rounded-md border ${
-                  compact ? 'p-2' : 'p-2.5'
+                  compact ? 'p-1.5' : 'p-2'
                 }`}
                 style={{
-                  backgroundColor: isFinal ? '#ECFDF5' : '#F8FAFC',
-                  borderColor: isFinal ? '#059669' : '#CBD5E1',
+                  backgroundColor: inkSaver
+                    ? '#FFFFFF'
+                    : isFinal
+                      ? '#ECFDF5'
+                      : '#F8FAFC',
+                  borderColor: inkSaver
+                    ? isFinal
+                      ? '#0F172A'
+                      : '#64748B'
+                    : isFinal
+                      ? '#059669'
+                      : '#CBD5E1',
+                  borderWidth: inkSaver && isFinal ? '1.5px' : '1px',
                 }}
               >
-                <div className="flex items-center justify-between gap-1 mb-1.5">
+                <div className="flex items-center justify-between gap-1 mb-1">
                   <span
-                    className={`font-bold px-1.5 py-0.5 rounded-sm leading-tight truncate ${
-                      compact ? 'text-[10px]' : 'text-[10.8px]'
+                    className={`font-bold px-1.5 py-0.5 rounded-sm leading-tight ${
+                      compact ? 'text-[9.5px]' : 'text-[10.2px]'
                     }`}
-                    style={{
-                      backgroundColor: isFinal ? '#047857' : '#1E293B',
-                      color: '#FFFFFF',
-                    }}
-                    title={badgeTitle}
+                    style={
+                      inkSaver
+                        ? {
+                            backgroundColor: isFinal ? '#E2E8F0' : '#F1F5F9',
+                            color: '#0F172A',
+                            border: '1px solid #334155',
+                          }
+                        : {
+                            backgroundColor: isFinal ? '#047857' : '#1E293B',
+                            color: '#FFFFFF',
+                          }
+                    }
                   >
                     {badgeTitle}
                   </span>
                   {idx < timeline.length - 1 && (
                     <svg
-                      width="13"
-                      height="11"
+                      width="12"
+                      height="10"
                       viewBox="0 0 14 12"
                       fill="none"
                       className="shrink-0"
@@ -336,7 +366,7 @@ export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
                     >
                       <path
                         d="M1 6H12M12 6L8 2M12 6L8 10"
-                        stroke={theme.primaryHex}
+                        stroke={arrowColor}
                         strokeWidth="1.8"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -344,17 +374,17 @@ export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
                     </svg>
                   )}
                   {isFinal && (
-                    <span className="text-[9.5px] font-extrabold leading-none text-emerald-800 shrink-0 whitespace-nowrap">
+                    <span
+                      className={`text-[9px] font-extrabold leading-none shrink-0 whitespace-nowrap ${
+                        inkSaver ? 'text-slate-900' : 'text-emerald-800'
+                      }`}
+                    >
                       예방 핵심
                     </span>
                   )}
                 </div>
 
-                <p
-                  className={`text-slate-800 font-medium leading-snug keep-all ${
-                    compact ? 'text-[10.4px]' : 'text-[11.2px]'
-                  }`}
-                >
+                <p className={`text-slate-900 font-medium leading-snug keep-all ${textClass}`}>
                   {stage.detail}
                 </p>
               </div>

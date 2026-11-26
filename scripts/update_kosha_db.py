@@ -1,24 +1,47 @@
 import os
 import re
 import sys
+import html
 import time
 import json
+import hashlib
 import argparse
 from collections import Counter
 from urllib.parse import unquote
 
-URLS = [
+DEFAULT_ENV_PATH = ".env"
+OUTPUT_DIR = "public/data"
+LEGACY_LITE_PATH = os.path.join(OUTPUT_DIR, "accidents_db_lite.json")
+
+DISASTER_CASE_URLS = [
     "https://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
     "http://apis.data.go.kr/B552468/disaster_api02/getdisaster_api02",
 ]
+DEFAULT_SIF_URL = "https://apis.data.go.kr/B552468/sifArchive/view"
+DEFAULT_FATALITY_URL = "https://apis.data.go.kr/B552468/news_api02/getNews_api02"
+
 TARGET_BUSINESSES = ["건설업", "제조업", "서비스업"]
-PER_BUSINESS_LIMIT = 500
+PER_BUSINESS_CASE_LIMIT = 500
+FATALITY_LIMIT = 500
+SIF_PER_CATE_LIMIT = 5000
 NUM_OF_ROWS = 100
-OUTPUT_PATH = "public/data/accidents_db_lite.json"
+REQUEST_SLEEP_SEC = 0.2
+
 EXCLUDE_KEYWORDS = ["공공데이터 서비스", "사고예방가이드", "공지사항", "이용안내", "게시판 정보"]
+FATALITY_DISCLAIMER_DEFAULT = "※ 위 내용은 신고 및 현재 파악된 내용으로 조사결과에 따라 변경될 수 있습니다."
 
 TITLE_SCORE_WEIGHT = 2.5
 BODY_SCORE_WEIGHT = 1.0
+
+SHARD_FILES = {
+    "건설현장": "db_con.json",
+    "제조업": "db_mfg.json",
+    "서비스업": "db_svc.json",
+}
+SHARD_EXT_FILES = {
+    "건설현장": "db_con_sif.json",
+}
+CONSTRUCTION_CORE_SIF_PER_WORKTYPE = 80
 
 TEMPLATES = {
     "떨어짐": {
@@ -36,8 +59,8 @@ TEMPLATES = {
             "안전모 턱끈 체결 및 미끄럼 방지 안전화를 착용했는가?",
         ],
         "ox": [
-            {"wrong": "잠깐 올라가서 확인만 할 건데 안전고리 없이 가자", "right": "단 5분 고소작업이라도 안전난간 확보 및 안전고리 체결 필수"},
-            {"wrong": "채광창이나 미고정 자재 위를 밟고 지나가자", "right": "취약 부재는 덮개·발판 설치 후 지정 통로로만 이동"},
+            {"wrong": "잠깐 올라가서 확인만 할 건데 안전고리 없이 가자", "right": "단 5분 고소작업이라도 안전난간 확보 및 안전고리 체결 필수", "note": "단시간 고소작업 중 추락이 전체 추락 사망재해의 다수를 차지합니다."},
+            {"wrong": "채광창이나 미고정 자재 위를 밟고 지나가자", "right": "취약 부재는 덮개·발판 설치 후 지정 통로로만 이동", "note": "선라이트·슬레이트 채광창은 사람 하중을 견디지 못하고 즉시 파손됩니다."},
         ],
         "slogan": "발판 확보! 난간 설치! 안전고리 체결 전 고소작업 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제42조·제45조(추락·지붕 위험 방지)",
@@ -58,8 +81,8 @@ TEMPLATES = {
             "맨손 대신 전용 이물질 제거 수공구를 준비했는가?",
         ],
         "ox": [
-            {"wrong": "자동 설비 에러만 잠깐 확인하고 나오면 괜찮아", "right": "에러 확인·이물질 제거도 무조건 운전정지 + LOTO 잠금 후 진입"},
-            {"wrong": "센서가 감지해 멈춰 있으니 손을 넣어도 안전해", "right": "센서 오작동 시 불시 가동 위험, 주전원 차단 후 전용 도구 사용"},
+            {"wrong": "자동 설비 에러만 잠깐 확인하고 나오면 괜찮아", "right": "에러 확인·이물질 제거도 무조건 운전정지 + LOTO 잠금 후 진입", "note": "비정형 점검·청소 중 불시 가동은 협착 사망의 최다 원인입니다."},
+            {"wrong": "센서가 감지해 멈춰 있으니 손을 넣어도 안전해", "right": "센서 오작동 시 불시 가동 위험, 주전원 차단 후 전용 도구 사용", "note": "센서 신호만으로는 잔류압력·오작동에 의한 기동을 막을 수 없습니다."},
         ],
         "slogan": "멈추고! 잠그고! 확인한 뒤에 손대자! (LOTO 필수)",
         "legal": "산업안전보건기준에 관한 규칙 제92조(정비 등의 작업 시의 운전정지)",
@@ -80,8 +103,8 @@ TEMPLATES = {
             "운전자·보조자 간 명확한 수신호·무전 체계를 약속했는가?",
         ],
         "ox": [
-            {"wrong": "고소작업대 탄 채로 위를 안 보고 후진·이동하자", "right": "이동 전 상부 장애물 확인 및 유도자 배치 후 저속 이동"},
-            {"wrong": "걸린 리프트를 발로 차서 강제로 내리자", "right": "주전원 차단 및 안전지지대 설치 후 전문 절차에 따라 정비"},
+            {"wrong": "고소작업대 탄 채로 위를 안 보고 후진·이동하자", "right": "이동 전 상부 장애물 확인 및 유도자 배치 후 저속 이동", "note": "상부 철골·배관과 난간 사이 협착은 중대 사망재해로 직결됩니다."},
+            {"wrong": "걸린 리프트를 발로 차서 강제로 내리자", "right": "주전원 차단 및 안전지지대 설치 후 전문 절차에 따라 정비", "note": "지지대 없는 리프트 하부·내부 진입 시 급강하 협착 위험이 극도로 높습니다."},
         ],
         "slogan": "상부 장애물 확인! 장비 가동 반경 신체 접근 절대 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제186조(고소작업대)·제172조(접촉 방지)",
@@ -102,8 +125,8 @@ TEMPLATES = {
             "장비 정차 시 바퀴 고임목 설치 및 시동 차단 원칙을 공유했는가?",
         ],
         "ox": [
-            {"wrong": "화물을 높이 실어도 천천히 앞으로 가면 괜찮아", "right": "전방 시야 불량 시 반드시 후진 주행 및 신호수 유도 하에 이동"},
-            {"wrong": "쉬는 시간이니 지게차 통로로 빠르게 가로질러 가자", "right": "휴게·이동 시간에도 지정된 보행자 통로만 이용"},
+            {"wrong": "화물을 높이 실어도 천천히 앞으로 가면 괜찮아", "right": "전방 시야 불량 시 반드시 후진 주행 및 신호수 유도 하에 이동", "note": "적재물에 가려진 전방 사각지대는 보행자 충돌의 대표 원인입니다."},
+            {"wrong": "쉬는 시간이니 지게차 통로로 빠르게 가로질러 가자", "right": "휴게·이동 시간에도 지정된 보행자 통로만 이용", "note": "장비 운전자는 교차로·출입구에서 갑작스러운 보행자를 인지하기 어렵습니다."},
         ],
         "slogan": "장비 반경 접근 금지! 사람과 차의 길을 확실히 나누자!",
         "legal": "산업안전보건기준에 관한 규칙 제172조(접촉의 방지)",
@@ -124,8 +147,8 @@ TEMPLATES = {
             "전도 위험 시 손으로 막지 않고 즉시 대피할 동선을 확보했는가?",
         ],
         "ox": [
-            {"wrong": "기울어진 톤백·설비를 몸으로 잠깐 받쳐 세우자", "right": "중량물 전도 징후 시 절대 몸으로 막지 말고 즉시 안전구역 대피"},
-            {"wrong": "화물 고정줄을 한 번에 다 풀고 빠르게 하차하자", "right": "전도 위험 확인 후 보조 지지 확보 상태에서 순차적으로 해체"},
+            {"wrong": "기울어진 톤백·설비를 몸으로 잠깐 받쳐 세우자", "right": "중량물 전도 징후 시 절대 몸으로 막지 말고 즉시 안전구역 대피", "note": "수백 kg 이상의 중량물은 인력으로 절대 지탱할 수 없습니다."},
+            {"wrong": "화물 고정줄을 한 번에 다 풀고 빠르게 하차하자", "right": "전도 위험 확인 후 보조 지지 확보 상태에서 순차적으로 해체", "note": "운송 중 편중된 적재물은 결속 해제 즉시 쏟아질 수 있습니다."},
         ],
         "slogan": "중량물 하부·전도 반경 출입 금지! 기울면 즉시 대피!",
         "legal": "산업안전보건기준에 관한 규칙 제38조(작업계획서)·제173조",
@@ -146,8 +169,8 @@ TEMPLATES = {
             "이상 징후 시 즉시 탈출할 비상 승강 사다리가 설치되었는가?",
         ],
         "ox": [
-            {"wrong": "깊이가 깊지 않으니 흙막이 없이 빨리 관로만 묻고 나오자", "right": "1.5m 이상 굴착 시 예외 없이 적정 기울기 또는 간이 흙막이 설치"},
-            {"wrong": "위에서 굴착기가 흙을 내릴 때 아래에서 미리 수평을 맞추자", "right": "장비 작업 반경 내 인력 동시 작업 절대 금지"},
+            {"wrong": "깊이가 깊지 않으니 흙막이 없이 빨리 관로만 묻고 나오자", "right": "1.5m 이상 굴착 시 예외 없이 적정 기울기 또는 간이 흙막이 설치", "note": "함수비가 높은 사면은 1.5~2m 깊이에서도 순식간에 매몰 사망을 유발합니다."},
+            {"wrong": "위에서 굴착기가 흙을 내릴 때 아래에서 미리 수평을 맞추자", "right": "장비 작업 반경 내 인력 동시 작업 절대 금지", "note": "진동과 상재하중이 겹치면 굴착 사면이 전조 없이 붕괴합니다."},
         ],
         "slogan": "흙막이 없이 굴착 진입 금지! 상·하 동시작업 절대 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제338조·제340조(굴착면 기울기·붕괴 방지)",
@@ -168,8 +191,8 @@ TEMPLATES = {
             "안전모 턱끈 체결 및 비상 대피 동선을 전원이 확인했는가?",
         ],
         "ox": [
-            {"wrong": "굴착기가 위에서 흙을 부을 때 아래에서 바로 수평을 맞추자", "right": "장비 토사 투하 중 하부 진입 절대 금지, 장비 정지 후 인력 투입"},
-            {"wrong": "신호수 없이 운전원이 눈대중으로 아래를 보며 작업하자", "right": "사각지대가 큰 굴착부 작업은 반드시 전담 신호수 지시에 따라 가동"},
+            {"wrong": "굴착기가 위에서 흙을 부을 때 아래에서 바로 수평을 맞추자", "right": "장비 토사 투하 중 하부 진입 절대 금지, 장비 정지 후 인력 투입", "note": "버킷 사각지대 하부 작업은 낙하 토사·버킷 타격 재해로 이어집니다."},
+            {"wrong": "신호수 없이 운전원이 눈대중으로 아래를 보며 작업하자", "right": "사각지대가 큰 굴착부 작업은 반드시 전담 신호수 지시에 따라 가동", "note": "굴착 저면은 운전석에서 시야 확보가 불가능합니다."},
         ],
         "slogan": "장비 투하 중 하부 진입 금지! 상·하 동시작업 절대 엄금!",
         "legal": "산업안전보건기준에 관한 규칙 제200조(접촉의 방지)·제14조(낙하물 방지)",
@@ -190,8 +213,8 @@ TEMPLATES = {
             "신호수 지정 및 표준 수신호 체계를 전원이 숙지했는가?",
         ],
         "ox": [
-            {"wrong": "슬링벨트가 살짝 헤졌지만 가벼운 자재니 한 번만 더 쓰자", "right": "손상된 달기구는 즉시 폐기하고 정격 인증 제품만 사용"},
-            {"wrong": "인양물 바로 아래에서 손으로 잡고 위치를 맞추자", "right": "인양물 하부 출입 금지, 안전거리에서 유도줄로 제어"},
+            {"wrong": "슬링벨트가 살짝 헤졌지만 가벼운 자재니 한 번만 더 쓰자", "right": "손상된 달기구는 즉시 폐기하고 정격 인증 제품만 사용", "note": "모서리 마모나 소선 절단은 인양 순간 급격한 파단을 일으킵니다."},
+            {"wrong": "인양물 바로 아래에서 손으로 잡고 위치를 맞추자", "right": "인양물 하부 출입 금지, 안전거리에서 유도줄로 제어", "note": "줄걸이 이탈 시 인양물 하부에서는 대피할 시간이 전혀 없습니다."},
         ],
         "slogan": "달기구 사전 점검! 인양물 하부·와이어 반경 출입 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제140조·제163조(양중기·달기구 안전기준)",
@@ -212,8 +235,8 @@ TEMPLATES = {
             "작업자 전원 안전모 턱끈 및 보안경 등 보호구를 착용했는가?",
         ],
         "ox": [
-            {"wrong": "안전모 썼으니 위에서 외벽 작업할 때 아래서 창호를 달자", "right": "상·하 동시작업 절대 금지, 하부 출입 통제 완료 후 상부 작업 개시"},
-            {"wrong": "수압시험 배관 캡이 살짝 느슨해도 압력 켠 채로 조이자", "right": "반드시 내부 압력(잔압) 완전 제거 후 정비·체결 실시"},
+            {"wrong": "안전모 썼으니 위에서 외벽 작업할 때 아래서 창호를 달자", "right": "상·하 동시작업 절대 금지, 하부 출입 통제 완료 후 상부 작업 개시", "note": "중량 자재 낙하 충격은 안전모만으로 방호할 수 없습니다."},
+            {"wrong": "수압시험 배관 캡이 살짝 느슨해도 압력 켠 채로 조이자", "right": "반드시 내부 압력(잔압) 완전 제거 후 정비·체결 실시", "note": "압력 용기·배관 부속품 이탈 시 총탄과 같은 비래 에너지가 발생합니다."},
         ],
         "slogan": "상·하 동시작업 금지! 낙하·비래 위험 반경 출입 통제!",
         "legal": "산업안전보건기준에 관한 규칙 제14조(낙하물에 의한 위험 방지)",
@@ -234,8 +257,8 @@ TEMPLATES = {
             "내열·내화학 보호복과 보안면 등 전용 보호구를 착용했는가?",
         ],
         "ox": [
-            {"wrong": "조금 떨어진 곳에서 용접하니 여기서 신너로 닦아도 괜찮아", "right": "유증기는 멀리 퍼지므로 화기작업과 인화성 물질 작업 동시 금지"},
-            {"wrong": "운전 멈췄으니 플랜지 볼트를 바로 풀어서 청소하자", "right": "반드시 내부 온도·압력 확인 및 드레인(완전 배출) 후 개방"},
+            {"wrong": "조금 떨어진 곳에서 용접하니 여기서 신너로 닦아도 괜찮아", "right": "유증기는 멀리 퍼지므로 화기작업과 인화성 물질 작업 동시 금지", "note": "인화성 증기는 바닥을 따라 체류·확산되어 용접 불티에 즉시 점화됩니다."},
+            {"wrong": "운전 멈췄으니 플랜지 볼트를 바로 풀어서 청소하자", "right": "반드시 내부 온도·압력 확인 및 드레인(완전 배출) 후 개방", "note": "잔류 압력과 고온 유체 분출은 중증 화상·폭발로 이어집니다."},
         ],
         "slogan": "화기·인화물 동시 작업 절대 금지! 설비 개방 전 잔압·고온 확인!",
         "legal": "산업안전보건기준에 관한 규칙 제239조·제241조(화재·화기작업 위험 방지)",
@@ -256,8 +279,8 @@ TEMPLATES = {
             "절연장갑·절연화 등 적정 절연보호구를 착용했는가?",
         ],
         "ox": [
-            {"wrong": "통신선 작업이니 옆 변압기 전원 안 꺼도 닿지만 않으면 돼", "right": "충전부 인근 작업 시 반드시 정전 조치 또는 절연방호구 설치"},
-            {"wrong": "스위치 내렸으니 검전기 확인 없이 바로 만지자", "right": "차단 후에도 반드시 검전기로 무전압 확인 및 LOTO 잠금"},
+            {"wrong": "통신선 작업이니 옆 변압기 전원 안 꺼도 닿지만 않으면 돼", "right": "충전부 인근 작업 시 반드시 정전 조치 또는 절연방호구 설치", "note": "고압 충전부는 직접 접촉 없이 접근만으로도 아크 감전이 발생합니다."},
+            {"wrong": "스위치 내렸으니 검전기 확인 없이 바로 만지자", "right": "차단 후에도 반드시 검전기로 무전압 확인 및 LOTO 잠금", "note": "회로 오인이나 타 작업자의 재투입으로 인한 감전을 반드시 차단해야 합니다."},
         ],
         "slogan": "전원 차단! 검전 확인! 절연 보호구 없이 충전부 접근 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제319조·제321조(정전작업·충전전로 인근작업)",
@@ -278,8 +301,8 @@ TEMPLATES = {
             "이상 발생 시 맨몸 진입 금지 원칙을 전원이 숙지했는가?",
         ],
         "ox": [
-            {"wrong": "냄새가 안 나고 잠깐 수위만 볼 거니 그냥 들어가자", "right": "산소결핍·일산화탄소는 무색무취, 반드시 측정·환기 후 출입"},
-            {"wrong": "동료가 쓰러졌으니 빨리 숨 참고 들어가서 꺼내자", "right": "2차 동반 질식 위험! 119 신고 후 공기호흡기 착용 상태에서만 구조"},
+            {"wrong": "냄새가 안 나고 잠깐 수위만 볼 거니 그냥 들어가자", "right": "산소결핍·일산화탄소는 무색무취, 반드시 측정·환기 후 출입", "note": "산소결핍 공기 한 모금 호흡만으로도 수 초 내 의식을 잃고 쓰러집니다."},
+            {"wrong": "동료가 쓰러졌으니 빨리 숨 참고 들어가서 꺼내자", "right": "2차 동반 질식 위험! 119 신고 후 공기호흡기 착용 상태에서만 구조", "note": "밀폐공간 사망재해는 보호구 없는 구조자의 연쇄 사망 비율이 매우 높습니다."},
         ],
         "slogan": "측정하고! 환기하고! 감시인 없으면 밀폐공간 출입 금지!",
         "legal": "산업안전보건기준에 관한 규칙 제619조(밀폐공간 작업 프로그램)",
@@ -287,8 +310,6 @@ TEMPLATES = {
     },
 }
 
-# Domain scoring rules: each entry is (work_type, [(keyword, domain_weight), ...]).
-# Title matches receive TITLE_SCORE_WEIGHT (2.5x) and body matches receive BODY_SCORE_WEIGHT (1.0x).
 WORK_TYPE_DOMAIN_RULES = {
     "건설현장": [
         (
@@ -306,7 +327,8 @@ WORK_TYPE_DOMAIN_RULES = {
                 ("지보공", 2.8), ("거푸집", 2.6), ("알폼", 2.8), ("갱폼", 2.8), ("동바리", 2.8),
                 ("관로", 2.4), ("되메우기", 2.8), ("사면", 2.2), ("옹벽", 2.4), ("석축", 2.4),
                 ("기초공사", 2.2), ("토목", 2.0), ("항타기", 2.6), ("파일", 2.0), ("크램쉘", 2.6),
-                ("롤러", 1.8), ("다짐", 1.8), ("불도저", 2.4), ("덤프트럭", 2.0),
+                ("롤러", 1.8), ("다짐", 1.8), ("불도저", 2.4), ("덤프트럭", 2.0), ("토공사", 2.6),
+                ("해상공사", 2.8), ("잠수", 2.8), ("수중", 2.6), ("준설", 2.8), ("방파제", 2.8), ("가물막이", 2.8),
             ],
         ),
         (
@@ -316,14 +338,14 @@ WORK_TYPE_DOMAIN_RULES = {
                 ("철골", 2.8), ("데크플레이트", 3.0), ("트러스", 2.6), ("캐노피", 2.6),
                 ("창호", 2.4), ("외벽", 2.4), ("고소작업대", 2.8), ("고소작업차", 2.8),
                 ("스카이차", 2.6), ("개구부", 2.2), ("슬래브", 2.0), ("발코니", 2.2),
-                ("옥상", 2.2), ("천장", 1.8), ("거더", 2.4), ("교량", 2.0),
+                ("옥상", 2.2), ("천장", 1.8), ("거더", 2.4), ("교량", 2.0), ("마감공사", 2.0),
             ],
         ),
         (
             "타워크레인·양중 작업",
             [
                 ("타워크레인", 3.2), ("이동식 크레인", 3.0), ("크레인", 2.6), ("양중", 2.8),
-                ("인양", 2.6), ("슬링벨트", 2.8), ("슬링", 2.4), ("와이어로프", 2.6),
+                ("인양", 2.6), ("슬링벨트", 2.8), ("슬링", 2.4), ("와이어로프", 2.6), ("섬유로프", 2.6),
                 ("호이스트", 2.8), ("건설용 리프트", 3.0), ("리프트", 2.4), ("윈치", 2.4),
                 ("달기구", 2.6), ("줄걸이", 2.6), ("지게차", 2.4), ("펌프카", 2.6),
                 ("믹서트럭", 2.2), ("레미콘", 2.0), ("하역", 2.2), ("상차", 2.0), ("하차", 2.0),
@@ -400,7 +422,7 @@ WORK_TYPE_DOMAIN_RULES = {
         (
             "물류창고 상하차·지게차 작업",
             [
-                ("물류창고", 3.2), ("물류센터", 3.2), ("물류", 2.6), ("창고", 2.4),
+                ("물류창고", 3.2), ("물류센터", 3.2), ("물류", 2.6), ("창고", 2.4), ("적재장", 2.6),
                 ("상하차", 3.0), ("상차", 2.4), ("하차", 2.4), ("하역", 2.8),
                 ("지게차", 3.2), ("오더피커", 3.2), ("리치스태커", 3.0), ("파렛트", 2.6),
                 ("팔레트", 2.6), ("피킹", 2.8), ("적재대", 2.6), ("컨테이너", 2.4),
@@ -451,40 +473,80 @@ WORK_TYPE_DOMAIN_RULES = {
     ],
 }
 
-# Hazard-type fallback classifier when domain keyword score is 0
+INDUSTRY_CLASSIFIER_RULES = {
+    "건설현장": [
+        ("공사", 3.2), ("신축", 3.2), ("증축", 3.0), ("개축", 3.0), ("철거공사", 3.4), ("철거", 2.6),
+        ("현장에서", 1.8), ("건설", 3.2), ("토목", 3.0), ("굴착", 2.8), ("흙막이", 3.2), ("거푸집", 3.2),
+        ("동바리", 3.2), ("알폼", 3.2), ("갱폼", 3.2), ("비계", 2.8), ("달비계", 3.0), ("데크플레이트", 3.2),
+        ("철골", 2.8), ("타워크레인", 3.4), ("펌프카", 3.2), ("레미콘", 2.8), ("믹서트럭", 2.8),
+        ("항타기", 3.0), ("양생", 2.8), ("관로", 2.6), ("도로포장", 3.0), ("교량", 2.8), ("터널", 3.0),
+        ("지붕공사", 3.2), ("방수공사", 3.2), ("도장공사", 3.2), ("창호", 2.4), ("슬래브", 2.6),
+    ],
+    "제조업": [
+        ("공장에서", 3.4), ("공장", 3.0), ("제조", 3.2), ("생산라인", 3.2), ("생산공정", 3.2),
+        ("프레스", 3.2), ("사출", 3.2), ("절곡기", 3.2), ("전단기", 3.2), ("선반", 2.8), ("밀링", 3.0),
+        ("보링", 3.0), ("금형", 3.0), ("용광로", 3.2), ("전기로", 3.2), ("주조", 3.0), ("단조", 3.0),
+        ("압연", 3.0), ("도금", 3.0), ("반응기", 3.2), ("화학설비", 3.2), ("컨베이어", 2.4),
+        ("천장크레인", 3.0), ("호이스트", 2.6), ("산업용 로봇", 3.2), ("교반기", 2.8), ("원심분리기", 3.0),
+        ("조선소", 3.2), ("선박 블록", 3.2), ("제철", 3.2), ("석유화학", 3.2),
+    ],
+    "서비스업": [
+        ("물류창고", 3.4), ("물류센터", 3.4), ("물류", 2.8), ("창고", 2.4), ("적재장", 2.6),
+        ("상하차", 2.8), ("택배", 3.2), ("배달", 3.2), ("이륜차", 3.2), ("오토바이", 3.2),
+        ("아파트", 2.6), ("빌딩", 2.8), ("상가", 2.6), ("관리사무소", 3.2), ("시설관리", 3.2),
+        ("경비원", 3.2), ("미화", 3.0), ("청소차", 3.2), ("수거", 2.8), ("폐기물", 3.0), ("재활용", 3.0),
+        ("엘리베이터", 2.8), ("승강기", 2.8), ("주차타워", 3.0), ("기계식주차", 3.2),
+        ("음식점", 3.2), ("식당", 3.0), ("조리실", 3.2), ("급식", 3.2), ("마트", 3.0), ("매장", 2.6),
+        ("병원", 2.8), ("학교", 2.6), ("벌목", 3.2), ("벌도목", 3.2), ("임업", 3.2), ("전지작업", 3.0),
+        ("농장", 3.0), ("축사", 3.0), ("양식장", 3.0), ("어선", 3.2), ("선착장", 2.8), ("부두", 2.6), ("항만", 2.8),
+    ],
+}
+
 HAZARD_WORK_TYPE_FALLBACK = {
     "건설현장": {
         "떨어짐": "철골·지붕 고소 작업",
+        "넘어짐": "철골·지붕 고소 작업",
         "붕괴·무너짐": "굴착·가시설 토목 작업",
+        "익사": "굴착·가시설 토목 작업",
         "깔림·뒤집힘": "타워크레인·양중 작업",
         "물체에 맞음": "타워크레인·양중 작업",
+        "찔림": "철골·지붕 고소 작업",
         "끼임": "타워크레인·양중 작업",
         "부딪힘": "굴착·가시설 토목 작업",
         "화재·폭발": "밀폐공간·양생 작업",
         "질식·중독": "밀폐공간·양생 작업",
         "감전": "철골·지붕 고소 작업",
+        "기타": "굴착·가시설 토목 작업",
     },
     "제조업": {
         "떨어짐": "고소작업대·설비 보수",
+        "넘어짐": "고소작업대·설비 보수",
         "감전": "고소작업대·설비 보수",
         "끼임": "컨베이어·회전체 점검/청소",
+        "찔림": "프레스·절곡·전단기 작업",
         "깔림·뒤집힘": "지게차·물류 하역 작업",
         "부딪힘": "지게차·물류 하역 작업",
         "물체에 맞음": "지게차·물류 하역 작업",
         "붕괴·무너짐": "지게차·물류 하역 작업",
         "화재·폭발": "화학물질·밀폐탱크 작업",
         "질식·중독": "화학물질·밀폐탱크 작업",
+        "익사": "화학물질·밀폐탱크 작업",
+        "기타": "고소작업대·설비 보수",
     },
     "서비스업": {
         "떨어짐": "건물 시설관리·조명 교체",
+        "넘어짐": "건물 시설관리·조명 교체",
         "감전": "건물 시설관리·조명 교체",
         "물체에 맞음": "건물 시설관리·조명 교체",
+        "찔림": "주방·조리실 화상/절단 작업",
         "질식·중독": "건물 시설관리·조명 교체",
+        "익사": "건물 시설관리·조명 교체",
         "끼임": "폐기물 파쇄·압축기 작업",
         "깔림·뒤집힘": "물류창고 상하차·지게차 작업",
         "붕괴·무너짐": "물류창고 상하차·지게차 작업",
         "부딪힘": "배달·이륜차 운행 작업",
         "화재·폭발": "주방·조리실 화상/절단 작업",
+        "기타": "건물 시설관리·조명 교체",
     },
 }
 
@@ -526,7 +588,7 @@ EQUIP_LIST = sorted(
         "채광창", "선라이트", "슬레이트 지붕", "샌드위치 패널", "지붕 패널", "지붕판넬", "PC판넬",
         "데크플레이트", "거푸집", "알폼", "갱폼", "동바리", "흙막이 지보공", "토류판",
         "크램쉘 버킷", "굴착기", "굴삭기", "불도저", "항타기", "스키드로더", "로더", "롤러",
-        "천장크레인", "타워크레인", "이동식 크레인", "크레인", "호이스트", "윈치", "슬링벨트", "와이어로프",
+        "천장크레인", "타워크레인", "이동식 크레인", "크레인", "호이스트", "윈치", "슬링벨트", "와이어로프", "섬유로프",
         "지게차", "오더피커", "리치스태커", "전동대차", "대차", "톤백", "파렛트", "팔레트",
         "벨트 컨베이어", "셔틀컨베이어", "스크류 컨베이어", "컨베이어",
         "산업용 로봇", "유압 성형 프레스", "동력프레스", "프레스", "사출성형기", "사출기",
@@ -567,46 +629,111 @@ EQUIP_SUFFIX_RE = re.compile(
 )
 
 
-def clean_text(text):
-    t = re.sub(r"^[‘'\"`]+", "", (text or "").strip())
-    t = re.split(r"\s*\*\s*[가-힣a-zA-Z]+:", t)[0]
-    return re.sub(r"\s+", " ", t).strip()
+def load_dotenv_file(dotenv_path=DEFAULT_ENV_PATH):
+    if not os.path.exists(dotenv_path):
+        return
+    with open(dotenv_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'").strip('"')
+            if k and k not in os.environ:
+                os.environ[k] = v
 
 
-def split_3lines(title, contents):
-    c = clean_text(contents)
+def mask_secrets(msg, secrets):
+    out = str(msg)
+    for sec in secrets:
+        if sec and len(sec) >= 6:
+            out = out.replace(sec, "***MASKED***")
+            out = out.replace(unquote(sec), "***MASKED***")
+    return out
+
+
+def normalize_whitespace_verbatim(text):
+    """
+    Normalizes only outer stray smart-quotes and multi-spaces while keeping 100%
+    of KOSHA original factual words, footnotes, and punctuation intact.
+    """
+    t = (text or "").strip()
+    if t.startswith("‘") and "’" not in t[:24]:
+        t = t.lstrip("‘").strip()
+    return re.sub(r"[ \t\r\f\v]+", " ", t).strip()
+
+
+def split_verbatim_clauses_3lines(title, overview):
+    """
+    Splits a factual overview into up to 3 clause segments ONLY at natural Korean
+    connectors for timeline/slide readability without deleting or altering words.
+    """
+    c = normalize_whitespace_verbatim(overview)
     m1 = re.match(
-        r"^(.+?소재\s+[^\s]+(?:\s+[^\s]+){0,3}(?:에서|내에서|현장에서|공장에서|창고에서|사업장에서|야적장에서|농장에서|부두\s+내\s+[^\s]+에서))[,]?\s*(.+)$",
+        r"^(.+?소재\s+[^\s]+(?:\s+[^\s]+){0,3}(?:에서|내에서|현장에서|공장에서|창고에서|사업장에서|야적장에서|농장에서|적재장에서|공사장에서))[,]?\s*(.+)$",
         c,
     )
     if m1:
-        p1, rest = m1.group(1).strip().rstrip(","), m1.group(2).strip()
-        m2 = re.search(r"(.+?(?:작업\s*중|이동\s*중|운반\s*중|운전\s*중|과정에서|순간|하던\s*중|하다가|되어|되면서))[,]?\s*(.+)", rest)
-        if m2 and len(m2.group(1)) >= 10 and len(m2.group(2)) >= 8:
-            return [p1, m2.group(1).strip().rstrip(","), m2.group(2).strip()]
-        w = rest.split(" ")
-        mid = max(1, len(w) // 2)
-        return [p1, " ".join(w[:mid]), " ".join(w[mid:]) or title]
-    w = c.split(" ")
-    if len(w) >= 6:
-        n = len(w)
-        return [" ".join(w[: n // 3]), " ".join(w[n // 3 : 2 * n // 3]), " ".join(w[2 * n // 3 :])]
-    return [title, c, "작업 전 안전점검 및 핵심 방호조치 미흡으로 재해 발생"]
+        p1, rest = m1.group(1).strip(), m1.group(2).strip()
+        m2 = re.search(
+            r"^(.+?(?:작업\s*중|이동\s*중|운반\s*중|운전\s*중|과정에서|순간|하던\s*중|하다가|되어|되면서))[,]?\s*(.+)$",
+            rest,
+        )
+        if m2 and len(m2.group(1)) >= 8 and len(m2.group(2)) >= 6:
+            return [p1, m2.group(1).strip(), m2.group(2).strip()]
+        return [p1, rest, f"{title} 재해 발생"]
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.다임됨음])\s+", c) if s.strip()]
+    if len(sentences) >= 3:
+        return [sentences[0], sentences[1], " ".join(sentences[2:])]
+    if len(sentences) == 2:
+        return [sentences[0], sentences[1], f"{title} 안전수칙 준수 필수"]
+    return [c, f"사고유형: {title}", "작업 전 위험요인 점검 및 방호조치 필수"]
 
 
-def detect_hazard(title, contents):
+def normalize_hazard_label(raw_hazard):
+    h = (raw_hazard or "").strip()
+    if not h:
+        return ""
+    if any(k in h for k in ["추락", "떨어짐", "빠짐"]):
+        return "떨어짐"
+    if any(k in h for k in ["붕괴", "무너", "매몰"]):
+        return "붕괴·무너짐"
+    if any(k in h for k in ["깔림", "전도", "전복", "뒤집"]):
+        return "깔림·뒤집힘"
+    if any(k in h for k in ["끼임", "협착", "말림", "절단", "베임"]):
+        return "끼임"
+    if any(k in h for k in ["맞음", "낙하", "비래"]):
+        return "물체에 맞음"
+    if any(k in h for k in ["화재", "폭발", "화상", "파열"]):
+        return "화재·폭발"
+    if any(k in h for k in ["감전", "전기"]):
+        return "감전"
+    if any(k in h for k in ["질식", "중독", "산소결핍", "유해가스"]):
+        return "질식·중독"
+    if any(k in h for k in ["부딪힘", "충돌", "접촉", "교통"]):
+        return "부딪힘"
+    return h
+
+
+def detect_hazard(title, contents, explicit_hazard=None):
+    norm_explicit = normalize_hazard_label(explicit_hazard)
+    if norm_explicit:
+        return norm_explicit
+
     rules = [
-        ("떨어짐", ["떨어짐", "추락", "빠짐"]),
+        ("떨어짐", ["떨어짐", "추락", "빠짐", "실족", "떨어져"]),
         ("붕괴·무너짐", ["매몰", "붕괴", "무너"]),
-        ("깔림·뒤집힘", ["깔림", "전도", "전복", "뒤집"]),
-        ("끼임", ["끼임", "협착", "말림"]),
-        ("물체에 맞음", ["맞음", "낙하", "파단되어", "비래"]),
-        ("화재·폭발", ["화재", "폭발", "화상", "응축수"]),
-        ("감전", ["감전", "충전부", "변압기"]),
-        ("질식·중독", ["질식", "중독", "산소결핍", "일산화탄소"]),
-        ("부딪힘", ["부딪힘", "충돌"]),
+        ("깔림·뒤집힘", ["깔림", "깔려", "전도", "전복", "뒤집"]),
+        ("끼임", ["끼임", "끼어", "협착", "말림"]),
+        ("물체에 맞음", ["맞음", "맞아", "낙하", "파단되어", "비래"]),
+        ("화재·폭발", ["화재", "폭발", "화상", "응축수", "인화"]),
+        ("감전", ["감전", "충전부", "변압기", "특고압"]),
+        ("질식·중독", ["질식", "중독", "산소결핍", "일산화탄소", "황화수소"]),
+        ("부딪힘", ["부딪힘", "부딪혀", "충돌", "치임"]),
     ]
-    for src in (title, contents):
+    for src in (title or "", contents or ""):
         for h, kws in rules:
             if any(k in src for k in kws):
                 return h
@@ -623,11 +750,27 @@ def _keyword_in_text(kw, text_lower, text_compact):
     return False
 
 
+def classify_industry_for_unlabeled(title, contents):
+    t_low = (title or "").lower()
+    t_comp = t_low.replace(" ", "")
+    b_low = (contents or "").lower()
+    b_comp = b_low.replace(" ", "")
+
+    scores = {"건설현장": 0.0, "제조업": 0.0, "서비스업": 0.0}
+    for ind, kw_list in INDUSTRY_CLASSIFIER_RULES.items():
+        for kw, w in kw_list:
+            if _keyword_in_text(kw, t_low, t_comp):
+                scores[ind] += w * TITLE_SCORE_WEIGHT
+            if _keyword_in_text(kw, b_low, b_comp):
+                scores[ind] += w * BODY_SCORE_WEIGHT
+
+    best_ind = max(scores, key=lambda k: scores[k])
+    if scores[best_ind] > 0:
+        return best_ind
+    return "건설현장"
+
+
 def classify_work_type(industry, title, contents, hazard_type):
-    """
-    Classifies work_type using title-weighted (2.5x) domain keyword scoring,
-    falling back to a hazard-type-aware classifier when no domain keyword matches.
-    """
     rules = WORK_TYPE_DOMAIN_RULES.get(industry, [])
     t_low = (title or "").lower()
     t_comp = t_low.replace(" ", "")
@@ -654,12 +797,11 @@ def classify_work_type(industry, title, contents, hazard_type):
     fallback_map = HAZARD_WORK_TYPE_FALLBACK.get(industry, {})
     if hazard_type in fallback_map:
         return fallback_map[hazard_type]
-
     return rules[0][0]
 
 
 def _clean_candidate_noun(phrase):
-    p = clean_text(phrase)
+    p = normalize_whitespace_verbatim(phrase)
     p = re.sub(r"\([^)]*\)", "", p)
     p = re.sub(r"\d+\s*명[이가]?\s*", "", p)
     p = re.sub(r"^.*?(?:작업\s*중|이동\s*중|운반\s*중|점검\s*중|보수\s*중|수리\s*중|해체\s*중|설치\s*중)\s+", "", p)
@@ -675,46 +817,32 @@ def _clean_candidate_noun(phrase):
     if not tokens:
         return ""
     candidate = " ".join(tokens[-2:]) if len(tokens) > 2 else " ".join(tokens)
-    if len(candidate) < 2 or len(candidate) > 16:
-        return ""
-    if candidate in NON_EQUIP_STOPWORDS:
+    if len(candidate) < 2 or len(candidate) > 16 or candidate in NON_EQUIP_STOPWORDS:
         return ""
     return EQUIP_ALIASES.get(candidate.replace(" ", ""), candidate)
 
 
 def extract_equipment_noun_phrase(title, contents):
-    """
-    Extracts an equipment/object Korean noun phrase from accident title
-    (or equipment-suffixed noun from contents) when no dictionary item matches.
-    """
     title_patterns = [
         r"([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)(?:에\s*(?:끼임|맞음|깔림|부딪힘|감전|말림|치임)|와\s*충돌|과\s*충돌)",
         r"([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)(?:에서|위에서|상부에서|상단에서)\s*(?:떨어짐|추락|빠짐|미끄러짐)",
         r"^([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)\s+(?:설치|해체|교체|보수|수리|점검|운반|인양|절단|천공|가공|세척|도장|투입|개방|포설|시공|철거|상차|하차|하역|조재)\s*작업",
         r"^([가-힣A-Za-z0-9·\-]+(?:\s+[가-힣A-Za-z0-9·\-]+){0,1}?)\s*(?:전도|전복|붕괴|폭발|파단|파손|누출)",
     ]
-
     for pat in title_patterns:
         for m in re.finditer(pat, title or ""):
             cand = _clean_candidate_noun(m.group(1))
             if cand:
                 return cand
-
     for src in (title, contents):
         for m in EQUIP_SUFFIX_RE.finditer(src or ""):
             cand = _clean_candidate_noun(m.group(1))
             if cand:
                 return cand
-
     return ""
 
 
 def extract_equipment(title, contents, work_type):
-    """
-    1) Prioritizes dictionary equipment match in `title` first, then `contents`.
-    2) Falls back to Korean noun-phrase extraction on `title` / equipment-suffix match.
-    3) Uses clean work-type equipment label instead of raw work_type prefix.
-    """
     title_compact = (title or "").replace(" ", "")
     for equip in EQUIP_LIST:
         key = equip.replace(" ", "")
@@ -734,6 +862,18 @@ def extract_equipment(title, contents, work_type):
     return WORK_TYPE_DEFAULT_EQUIP.get(work_type, "현장 작업 설비 및 기구")
 
 
+def detect_season_tag(text):
+    if any(k in text for k in ["갈탄", "양생", "결빙", "폭설", "제설", "한파", "동결"]):
+        return "동절기"
+    if any(k in text for k in ["우천", "장마", "강풍", "폭우", "태풍", "호우", "침수"]):
+        return "장마철"
+    if any(k in text for k in ["폭염", "온열", "열사병", "탈진"]):
+        return "혹서기"
+    if any(k in text for k in ["해빙", "융해"]):
+        return "해빙기"
+    return "상시"
+
+
 def select_template_key(hazard_type, full_text):
     if hazard_type == "끼임":
         if any(k in full_text for k in ["지게차", "고소작업", "아웃트리거", "리프트", "엘리베이터", "승강기", "청소차", "수집차", "트레일러", "크레인", "대차", "차량", "스키드로더"]):
@@ -742,7 +882,7 @@ def select_template_key(hazard_type, full_text):
     if hazard_type == "물체에 맞음":
         if any(k in full_text for k in ["굴착", "토사", "되메우기", "흙막이", "사면"]):
             return "맞음_굴착토사"
-        if any(k in full_text for k in ["크레인", "슬링", "와이어로프", "윈치", "인양", "달기구", "호이스트", "훅"]):
+        if any(k in full_text for k in ["크레인", "슬링", "와이어로프", "섬유로프", "윈치", "인양", "달기구", "호이스트", "훅"]):
             return "맞음_인양달기구"
         return "맞음_낙하비래"
     return hazard_type if hazard_type in TEMPLATES else "맞음_낙하비래"
@@ -768,44 +908,428 @@ def register_template(t_key, templates_out, tpl_key_to_id):
     return tpl_key_to_id[t_key]
 
 
-def build_keywords(industry, hazard_type, equipment, work_type):
+def build_keywords(industry, hazard_type, equipment, work_type, extra=None):
     ordered = []
-    for tok in (industry, hazard_type, equipment, work_type.split("·")[0]):
+    for tok in [industry, hazard_type, equipment, work_type.split("·")[0], *(extra or [])]:
         if tok and tok not in ordered:
             ordered.append(tok)
     return ordered
 
 
-def fetch_kosha_cases(service_key, business="", limit=500, rows=100):
-    import requests
+def parse_case_occurred_date(contents, boardno=""):
+    """
+    Safely parses masked KOSHA dates such as ‘2026.05.00(수) or 2025. 9. 0.(목).
+    When DD is 0 or 00, stores YYYY-MM to prevent Invalid Date errors.
+    """
+    head = (contents or "")[:60]
+    m = re.search(r"(20\d{2}|19\d{2})\s*[.\-/년]\s*(\d{1,2})(?:\s*[.\-/월]\s*(\d{1,2}))?", head)
+    if m:
+        yyyy = int(m.group(1))
+        mm = int(m.group(2))
+        dd = int(m.group(3)) if m.group(3) is not None else 0
+        if 1 <= mm <= 12:
+            if 1 <= dd <= 31:
+                return f"{yyyy:04d}-{mm:02d}-{dd:02d}"
+            return f"{yyyy:04d}-{mm:02d}"
 
+    bno_digits = re.match(r"^(\d{4})(\d{2})(\d{2})", str(boardno or ""))
+    if bno_digits:
+        y, mo = int(bno_digits.group(1)), int(bno_digits.group(2))
+        if 1990 <= y <= 2099 and 1 <= mo <= 12:
+            return f"{y:04d}-{mo:02d}"
+    return ""
+
+
+def parse_fatality_html(raw_html):
+    """
+    Strips MS Word tags and extracts image URL + standard KOSHA disclaimer while
+    preserving 100% of the factual accident report text without summarizing.
+    """
+    src_html = raw_html or ""
+
+    # 1. Extract <img src="..."> and fix double-prefix bug
+    source_image_url = None
+    img_match = re.search(r"<img\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", src_html, flags=re.I)
+    if img_match:
+        raw_url = html.unescape(img_match.group(1).strip())
+        raw_url = re.sub(r"^https?://erp\.kosha\.or\.kr(?=https?://)", "", raw_url, flags=re.I)
+        if raw_url.startswith("http://") or raw_url.startswith("https://"):
+            source_image_url = raw_url
+
+    # 2. Remove img/style/o:p and convert block tags to line breaks
+    cleaned = re.sub(r"<img\b[^>]*>", "", src_html, flags=re.I)
+    cleaned = re.sub(r"<style\b[^>]*>.*?</style>", "", cleaned, flags=re.I | re.S)
+    cleaned = re.sub(r"</?o:p\b[^>]*>", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"<br\s*/?>", "\n", cleaned, flags=re.I)
+    cleaned = re.sub(r"</(?:p|div|li|tr)>", "\n", cleaned, flags=re.I)
+    cleaned = re.sub(r"<[^>]+>", "", cleaned)
+    cleaned = html.unescape(cleaned).replace("\xa0", " ")
+
+    # 3. Extract lines and separate standard KOSHA disclaimer
+    raw_lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in cleaned.splitlines()]
+    raw_lines = [ln for ln in raw_lines if ln]
+
+    disclaimer = None
+    fact_lines = []
+    for ln in raw_lines:
+        if ln.startswith("※") and ("조사결과에 따라" in ln or "현재 파악된 내용" in ln):
+            disclaimer = ln
+        else:
+            # Fix concatenated time/casualty boundaries without breaking words like 경남/경기
+            ln = re.sub(r"(\d{1,2}:\d{2}\s*경|\d{1,2}시(?:\s*\d{1,2}분)?\s*경)(?=[가-힣])", r"\1 ", ln)
+            ln = re.sub(r"(?<!\s)(\(사망)", r" \1", ln)
+            ln = re.sub(r"(?<!\s)(※\s*위 내용은.*$)", "", ln).strip()
+            if ln:
+                fact_lines.append(ln)
+
+    overview_raw = " ".join(fact_lines).strip()
+    overview_raw = re.sub(r"\s+", " ", overview_raw)
+
+    # Preserve verbatim paragraphs as 3-line structure
+    if len(fact_lines) >= 4:
+        summary_3lines = [
+            f"{fact_lines[0]} {fact_lines[1]}".strip(),
+            fact_lines[2],
+            " ".join(fact_lines[3:]).strip(),
+        ]
+    elif len(fact_lines) == 3:
+        summary_3lines = [fact_lines[0], fact_lines[1], fact_lines[2]]
+    elif len(fact_lines) == 2:
+        summary_3lines = [fact_lines[0], fact_lines[1], "사망사고 발생 경위 조사 진행 중"]
+    else:
+        summary_3lines = [overview_raw, "", ""]
+
+    return overview_raw, summary_3lines, source_image_url, (disclaimer or FATALITY_DISCLAIMER_DEFAULT)
+
+
+# =====================================================================
+# ADAPTERS: FATALITY / SIF / CASE
+# =====================================================================
+
+def normalize_fatality(item, templates_out, tpl_key_to_id):
+    arno = str(item.get("arno", "")).strip()
+    raw_kw = normalize_whitespace_verbatim(str(item.get("keyword", "")))
+    raw_contents = str(item.get("contents", ""))
+    if not arno or not raw_kw or not raw_contents.strip():
+        return None
+    if any(k in raw_kw for k in EXCLUDE_KEYWORDS):
+        return None
+
+    overview_raw, summary_3lines, source_image_url, disclaimer = parse_fatality_html(raw_contents)
+    if len(overview_raw) < 15:
+        return None
+
+    # Extract [MM/DD, 지역명] from keyword while preserving clean display title
+    region = ""
+    title = raw_kw
+    m_reg = re.match(r"^\[\s*(?:\d{1,2}/\d{1,2}\s*,\s*)?([^\]]+?)\s*\]\s*(.+)$", raw_kw)
+    if m_reg:
+        region = m_reg.group(1).strip()
+        title = m_reg.group(2).strip()
+
+    # Extract occurred_date YYYY-MM-DD from overview_raw, fallback to arno[:8]
+    occurred_date = ""
+    m_date = re.search(r"(20\d{2})\s*\.\s*(\d{1,2})\s*\.\s*(\d{1,2})", overview_raw[:50])
+    if m_date:
+        y, mo, d = int(m_date.group(1)), int(m_date.group(2)), int(m_date.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            occurred_date = f"{y:04d}-{mo:02d}-{d:02d}"
+    if not occurred_date and re.match(r"^\d{8}", arno):
+        occurred_date = f"{arno[:4]}-{arno[4:6]}-{arno[6:8]}"
+
+    full_text = f"{title} {overview_raw}"
+    industry = classify_industry_for_unlabeled(title, overview_raw)
+    hazard_type = detect_hazard(title, overview_raw)
+    work_type = classify_work_type(industry, title, overview_raw, hazard_type)
+    equipment = extract_equipment(title, overview_raw, work_type)
+    t_key = select_template_key(hazard_type, full_text)
+    t_id = register_template(t_key, templates_out, tpl_key_to_id)
+
+    summary_filled = [
+        summary_3lines[0] or overview_raw,
+        summary_3lines[1] or title,
+        summary_3lines[2] or "현장 안전수칙 준수 및 사전 위험요인 점검 필수",
+    ]
+
+    return {
+        "id": f"FATAL-{arno}",
+        "source_type": "FATALITY",
+        "facts_locked": True,
+        "industry": industry,
+        "process": f"{industry} · {work_type}",
+        "work_type": work_type,
+        "equipment": equipment,
+        "hazard_type": hazard_type,
+        "season_tag": detect_season_tag(overview_raw),
+        "severity": "사망",
+        "occurred_date": occurred_date,
+        "sort_ts": arno[:14] if len(arno) >= 14 else occurred_date.replace("-", ""),
+        "region": region,
+        "title": title,
+        "raw_keyword": raw_kw,
+        "overview_raw": overview_raw,
+        "summary_3lines": summary_filled,
+        "direct_causes": [
+            f"[속보 확인] {title}",
+            f"기인물({equipment}) 관련 {hazard_type} 위험 통제 필요",
+            "세부 발생원인은 공단·관계기관 조사 결과에 따름",
+        ],
+        "source_ref": f"한국산업안전보건공단 사고사망 속보 ({arno})",
+        "source_image_url": source_image_url,
+        "disclaimer": disclaimer,
+        "keywords": build_keywords(industry, hazard_type, equipment, work_type, [region] if region else None),
+        "t": t_id,
+    }
+
+
+def parse_sif_measures(raw_cntrpln):
+    if not raw_cntrpln:
+        return []
+    items = []
+    for ln in str(raw_cntrpln).splitlines():
+        cleaned = re.sub(r"^\s*[▶▷►•\-*]+\s*", "", ln).strip()
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
+def build_sif_display_title(equip_display, unit_work_label, hazard_type, factor_raw, occurred_date):
+    factor = (factor_raw or "").strip()
+    if 8 <= len(factor) <= 54:
+        return factor
+    short_work = unit_work_label.split(">")[-1].strip() if unit_work_label else ""
+    base = (
+        f"{equip_display} · {short_work} 중 {hazard_type}"
+        if equip_display and short_work
+        else f"{equip_display or short_work} {hazard_type} 고위험요인"
+    )
+    if occurred_date:
+        return f"{base} ({occurred_date.replace('-', '.')})"
+    return base
+
+
+def normalize_sif(item, templates_out, tpl_key_to_id):
+    cate_se = normalize_whitespace_verbatim(str(item.get("cateSeNm") or ""))
+    lclsf = normalize_whitespace_verbatim(str(item.get("sifLclsfNm") or ""))
+    mclsf = normalize_whitespace_verbatim(str(item.get("sifMclsfNm") or ""))
+    sclsf = normalize_whitespace_verbatim(str(item.get("sifSclsfNm") or ""))
+    disaster_type_raw = normalize_whitespace_verbatim(str(item.get("disasterType") or "")) if item.get("disasterType") else ""
+    overview_raw = normalize_whitespace_verbatim(str(item.get("disasterOverview") or ""))
+    orgt_nm = normalize_whitespace_verbatim(str(item.get("orgtNm") or ""))
+    situation_raw = normalize_whitespace_verbatim(str(item.get("situation") or "")) if item.get("situation") else ""
+    factor_raw = normalize_whitespace_verbatim(str(item.get("disasterFactor") or "")) if item.get("disasterFactor") else ""
+    cntrpln_raw = item.get("dcrsCntrplnCn") or ""
+
+    if not overview_raw or len(overview_raw) < 15:
+        return None
+
+    # Deterministic ID per spec: sha256(f"{sifLclsfNm}|{orgtNm}|{disasterOverview}")[:12]
+    digest = hashlib.sha256(f"{lclsf}|{orgt_nm}|{overview_raw}".encode("utf-8")).hexdigest()[:12].upper()
+    sif_id = f"SIF-{digest}"
+
+    # Industry mapping from cateSeNm + sifLclsfNm
+    if cate_se == "건설업" or any(k in lclsf for k in ["공사", "건설", "토목", "건축"]):
+        industry = "건설현장"
+    elif "제조" in lclsf:
+        industry = "제조업"
+    elif "광업" in lclsf:
+        industry = "건설현장"
+    else:
+        industry = "서비스업"
+
+    hazard_type = detect_hazard(factor_raw, overview_raw, explicit_hazard=disaster_type_raw)
+
+    clean_m = re.sub(r"^[\d.]+\s*", "", mclsf).strip()
+    clean_s = re.sub(r"^[\d.]+\s*", "", sclsf).strip()
+    unit_work_label = situation_raw or clean_s or clean_m or lclsf
+
+    equip_display = orgt_nm or extract_equipment(unit_work_label, overview_raw, "")
+
+    # Extract YYYY년 M월 -> YYYY-MM
+    occurred_date = ""
+    m_ym = re.search(r"(20\d{2}|19\d{2})\s*년\s*(\d{1,2})\s*월", overview_raw[:40])
+    if m_ym:
+        occurred_date = f"{int(m_ym.group(1)):04d}-{int(m_ym.group(2)):02d}"
+
+    work_type = classify_work_type(industry, f"{orgt_nm} {unit_work_label}", f"{factor_raw} {overview_raw}", hazard_type)
+    if not equip_display:
+        equip_display = WORK_TYPE_DEFAULT_EQUIP.get(work_type, "현장 작업 설비")
+
+    title = build_sif_display_title(equip_display, unit_work_label, hazard_type, factor_raw, occurred_date)
+    full_text = f"{title} {lclsf} {mclsf} {sclsf} {factor_raw} {overview_raw}"
+
+    t_key = select_template_key(hazard_type, full_text)
+    t_id = register_template(t_key, templates_out, tpl_key_to_id)
+
+    sif_measures = parse_sif_measures(cntrpln_raw)
+    category_path = " > ".join(x for x in [lclsf, mclsf, sclsf] if x)
+    high_risk_work = situation_raw if situation_raw else " > ".join(x for x in [clean_m, clean_s] if x) or lclsf
+
+    summary_3lines = split_verbatim_clauses_3lines(title, overview_raw)
+    direct_causes = [
+        factor_raw or overview_raw,
+        f"고위험작업·상황: {high_risk_work}" if high_risk_work else f"기인물: {equip_display}",
+        f"업종·공종 분류: {category_path}" if category_path else f"재해유형: {hazard_type}",
+    ]
+
+    record = {
+        "id": sif_id,
+        "source_type": "SIF",
+        "facts_locked": True,
+        "industry": industry,
+        "process": category_path or f"{industry} · {work_type}",
+        "work_type": work_type,
+        "equipment": equip_display,
+        "hazard_type": hazard_type,
+        "season_tag": detect_season_tag(overview_raw),
+        "severity": "사망",
+        "occurred_date": occurred_date,
+        "sort_ts": occurred_date.replace("-", "") + "000000" if occurred_date else "00000000000000",
+        "title": title,
+        "overview_raw": overview_raw,
+        "summary_3lines": summary_3lines,
+        "high_risk_work": high_risk_work,
+        "hazard_factor": factor_raw,
+        "sif_meta": {
+            "cateSeNm": cate_se,
+            "sifLclsfNm": lclsf,
+            "sifMclsfNm": mclsf,
+            "sifSclsfNm": sclsf,
+            "orgtNm": orgt_nm,
+            "situation": situation_raw or None,
+        },
+        "direct_causes": direct_causes,
+        "source_ref": "한국산업안전보건공단 사망사고 고위험요인(SIF) 아카이브",
+        "keywords": build_keywords(industry, hazard_type, equip_display, work_type, [clean_m, clean_s]),
+        "t": t_id,
+    }
+    if sif_measures:
+        record["preventive_measures"] = sif_measures
+    return record
+
+
+def normalize_disaster(item, templates_out, tpl_key_to_id):
+    boardno = str(item.get("boardno", "")).strip()
+    title = normalize_whitespace_verbatim(str(item.get("keyword", "")))
+    overview_raw = normalize_whitespace_verbatim(str(item.get("contents", "")))
+    if not boardno or not title or not overview_raw:
+        return None
+    if any(k in title or k in overview_raw for k in EXCLUDE_KEYWORDS):
+        return None
+    if len(overview_raw) < 20 or overview_raw == title:
+        return None
+
+    raw_biz = str(item.get("business", "")).strip()
+    industry = "건설현장" if "건설" in raw_biz else "제조업" if "제조" in raw_biz else "서비스업"
+    full_text = f"{title} {overview_raw}"
+
+    hazard_type = detect_hazard(title, overview_raw)
+    work_type = classify_work_type(industry, title, overview_raw, hazard_type)
+    equipment = extract_equipment(title, overview_raw, work_type)
+    t_key = select_template_key(hazard_type, full_text)
+    t_id = register_template(t_key, templates_out, tpl_key_to_id)
+
+    try:
+        atcflcnt = int(str(item.get("atcflcnt", "0")).strip() or "0")
+    except ValueError:
+        atcflcnt = 0
+
+    occurred_date = parse_case_occurred_date(overview_raw, boardno)
+    sort_prefix = re.match(r"^(\d{14})", boardno)
+    sort_ts = sort_prefix.group(1) if sort_prefix else (occurred_date.replace("-", "") + "000000")
+
+    return {
+        "id": f"CASE-{boardno}",
+        "source_type": "CASE",
+        "facts_locked": True,
+        "boardno": boardno,
+        "atcflcnt": atcflcnt,
+        "industry": industry,
+        "process": f"{raw_biz or industry} · {work_type}",
+        "work_type": work_type,
+        "equipment": equipment,
+        "hazard_type": hazard_type,
+        "season_tag": detect_season_tag(overview_raw),
+        "severity": "사망" if any(k in overview_raw for k in ["사망", "숨졌", "숨짐"]) else "중대재해",
+        "occurred_date": occurred_date,
+        "sort_ts": sort_ts,
+        "title": title,
+        "overview_raw": overview_raw,
+        "summary_3lines": split_verbatim_clauses_3lines(title, overview_raw),
+        "direct_causes": [
+            f"기인물({equipment}) 관련 {hazard_type} 방호조치 확인 필요",
+            "작업 전 위험요인 사전 점검 및 표준 안전작업절차 준수 필요",
+            "위험구역 출입 통제 및 작업 특성별 개인보호구 착용 철저",
+        ],
+        "source_ref": f"한국산업안전보건공단 국내재해사례 ({boardno})",
+        "keywords": build_keywords(industry, hazard_type, equipment, work_type),
+        "t": t_id,
+    }
+
+
+# =====================================================================
+# SAFE PAGINATED FETCHERS
+# =====================================================================
+
+_HTTP_SESSION = None
+
+
+def _get_http_session():
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None:
+        import requests
+
+        s = requests.Session()
+        s.headers.update({"Connection": "keep-alive", "Accept": "application/json"})
+        _HTTP_SESSION = s
+    return _HTTP_SESSION
+
+
+def _with_http_fallback(urls):
+    raw_list = urls if isinstance(urls, list) else [urls]
+    expanded = []
+    for u in raw_list:
+        if u and u not in expanded:
+            expanded.append(u)
+        if u and u.startswith("https://"):
+            http_u = "http://" + u[len("https://"):]
+            if http_u not in expanded:
+                expanded.append(http_u)
+    return expanded
+
+
+def _get_json_with_retry(urls, params, secrets, label):
+    session = _get_http_session()
+    url_list = _with_http_fallback(urls)
+    last_err = None
+    for attempt in range(4):
+        for u in url_list:
+            try:
+                resp = session.get(u, params=params, timeout=(12, 30))
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                last_err = mask_secrets(e, secrets)
+                time.sleep(0.8 * (attempt + 1))
+    raise RuntimeError(f"[{label}] API 호출 실패: {last_err}")
+
+
+def fetch_fatality_items(service_key, api_url, call_api_id, limit, secrets):
     collected, page = [], 1
     while len(collected) < limit:
-        params = {
-            "serviceKey": service_key,
-            "callApiId": "1060",
-            "pageNo": page,
-            "numOfRows": min(rows, limit - len(collected)),
-        }
-        if business:
-            params["business"] = business
+        rows = min(NUM_OF_ROWS, limit - len(collected))
+        data = _get_json_with_retry(
+            api_url,
+            {"serviceKey": service_key, "callApiId": call_api_id, "pageNo": page, "numOfRows": rows},
+            secrets,
+            "FATALITY",
+        )
+        if str((data.get("header") or {}).get("resultCode", "")) != "00":
+            raise RuntimeError(f"[FATALITY] 비정상 응답 코드: {data.get('header')}")
 
-        data = None
-        for url in URLS:
-            try:
-                res = requests.get(url, params=params, timeout=25)
-                res.raise_for_status()
-                data = res.json()
-                break
-            except Exception as e:
-                print(f"[{business}] 재시도({url[:5]}): {e}")
-
-        if not data or str(data.get("header", {}).get("resultCode", "")) != "00":
-            break
-
-        body = data.get("body", {}) or {}
-        items_wrap = body.get("items") or {}
-        items = items_wrap.get("item", []) if isinstance(items_wrap, dict) else []
+        body = data.get("body") or {}
+        items = (body.get("items") or {}).get("item", []) if isinstance(body, dict) else []
         if isinstance(items, dict):
             items = [items]
         if not items:
@@ -813,185 +1337,657 @@ def fetch_kosha_cases(service_key, business="", limit=500, rows=100):
 
         collected.extend(items)
         total_count = int(body.get("totalCount", 0) or 0)
-        print(f"[{business}] {page}p 완료 — 누적 {len(collected)}/{min(limit, total_count)}건")
-        if len(collected) >= total_count or len(items) < min(rows, limit - (len(collected) - len(items))):
+        print(f"[FATALITY] {page}p 완료 — 누적 {len(collected)}/{min(limit, total_count)}건")
+        if len(collected) >= total_count or len(items) < rows:
             break
         page += 1
-        time.sleep(0.15)
+        time.sleep(REQUEST_SLEEP_SEC)
     return collected
 
 
-def reclassify_local_db(db_path):
-    if not os.path.exists(db_path):
-        print(f"ERROR: 로컬 DB 파일을 찾을 수 없습니다: {db_path}")
-        sys.exit(1)
+def fetch_sif_items(service_key, api_url, per_cate_limit, secrets):
+    all_items = []
+    for cate_cd, cate_label in [("0", "건설업"), ("1", "전업종")]:
+        collected, page = [], 1
+        while len(collected) < per_cate_limit:
+            rows = min(NUM_OF_ROWS, per_cate_limit - len(collected))
+            try:
+                data = _get_json_with_retry(
+                    api_url,
+                    {
+                        "serviceKey": service_key,
+                        "callApiId": "1170",
+                        "cateSeCd": cate_cd,
+                        "disasterOverview": "%",
+                        "pageNo": page,
+                        "numOfRows": rows,
+                    },
+                    secrets,
+                    f"SIF-{cate_label}",
+                )
+            except Exception as e:
+                print(f"[WARN] SIF:{cate_label} {page}p 응답 지연 — 기수집 {len(collected)}건 유지: {mask_secrets(e, secrets)}")
+                break
 
-    with open(db_path, "r", encoding="utf-8") as f:
-        existing = json.load(f)
+            if str((data.get("header") or {}).get("resultCode", "")) != "00":
+                print(f"[WARN] SIF:{cate_label} {page}p 비정상 응답: {data.get('header')}")
+                break
 
-    raw_cases = existing.get("cases", [])
-    if not raw_cases:
-        print("ERROR: 로컬 DB에 재분류할 사고사례가 없습니다.")
-        sys.exit(1)
+            body = data.get("body") or {}
+            items = (body.get("items") or {}).get("item", []) if isinstance(body, dict) else []
+            if isinstance(items, dict):
+                items = [items]
+            if not items:
+                break
 
-    templates_out, tpl_key_to_id, updated_cases = {}, {}, []
-    industry_to_biz = {"건설현장": "건설업", "제조업": "제조업", "서비스업": "서비스업"}
-
-    for case in raw_cases:
-        title = clean_text(str(case.get("title", "")))
-        summary_lines = case.get("summary_3lines") or []
-        contents = clean_text(" ".join(str(x) for x in summary_lines if x))
-        full_text = f"{title} {contents}"
-
-        industry = case.get("industry", "건설현장")
-        if industry not in WORK_TYPE_DOMAIN_RULES:
-            industry = "건설현장"
-
-        raw_process = str(case.get("process", ""))
-        raw_biz = raw_process.split(" · ")[0].strip() if " · " in raw_process else industry_to_biz[industry]
-
-        hazard_type = detect_hazard(title, contents)
-        work_type = classify_work_type(industry, title, contents, hazard_type)
-        equipment = extract_equipment(title, contents, work_type)
-        t_key = select_template_key(hazard_type, full_text)
-        t_id = register_template(t_key, templates_out, tpl_key_to_id)
-
-        updated_cases.append({
-            "id": case["id"],
-            "industry": industry,
-            "process": f"{raw_biz} · {work_type}",
-            "work_type": work_type,
-            "equipment": equipment,
-            "hazard_type": hazard_type,
-            "season_tag": case.get("season_tag", "상시"),
-            "severity": case.get("severity", "중대재해"),
-            "title": title,
-            "source_ref": case.get("source_ref", ""),
-            "summary_3lines": summary_lines,
-            "direct_causes": [
-                f"{equipment} 작업 시 핵심 {hazard_type} 방호조치 미흡",
-                "작업 전 위험요인 확인 및 안전작업절차 미준수",
-                "위험구역 출입 통제 또는 전용 보호구 착용 미흡",
-            ],
-            "keywords": build_keywords(industry, hazard_type, equipment, work_type),
-            "t": t_id,
-        })
-
-    payload = {
-        "format": "kosha-lite-v1",
-        "updated_at": existing.get("updated_at") or time.strftime("%Y-%m-%d"),
-        "templates": templates_out,
-        "cases": updated_cases,
-    }
-    with open(db_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-
-    size_kb = os.path.getsize(db_path) / 1024
-    print(f"[로컬 재분류 완료] {len(updated_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(db_path)}")
-    print("업종별 분포:", dict(Counter(x["industry"] for x in updated_cases)))
-    for ind in ("건설현장", "제조업", "서비스업"):
-        dist = Counter(x["work_type"] for x in updated_cases if x["industry"] == ind)
-        print(f"  - {ind} 작업유형 분포:", dict(dist))
+            collected.extend(items)
+            total_count = int(body.get("totalCount", 0) or 0)
+            if page == 1 or page % 10 == 0 or len(collected) >= min(per_cate_limit, total_count):
+                print(f"[SIF:{cate_label}] {page}p 완료 — 누적 {len(collected)}/{min(per_cate_limit, total_count)}건")
+            if len(collected) >= total_count or len(items) < rows:
+                break
+            page += 1
+            time.sleep(REQUEST_SLEEP_SEC)
+        all_items.extend(collected)
+    return all_items
 
 
-def fetch_and_build_db(db_path):
-    raw_key = os.environ.get("KOSHA_API_KEY", "").strip()
-    if not raw_key:
-        print("ERROR: KOSHA_API_KEY 시크릿이 설정되지 않았습니다.")
-        sys.exit(1)
-
-    service_key = unquote(raw_key)
-    all_raw, seen = [], set()
+def fetch_disaster_case_items(service_key, per_biz_limit, secrets):
+    all_items, seen_bno = [], set()
     for biz in TARGET_BUSINESSES:
-        for it in fetch_kosha_cases(service_key, biz, PER_BUSINESS_LIMIT, NUM_OF_ROWS):
+        collected, page = [], 1
+        while len(collected) < per_biz_limit:
+            rows = min(NUM_OF_ROWS, per_biz_limit - len(collected))
+            data = _get_json_with_retry(
+                DISASTER_CASE_URLS,
+                {"serviceKey": service_key, "callApiId": "1060", "business": biz, "pageNo": page, "numOfRows": rows},
+                secrets,
+                f"CASE-{biz}",
+            )
+            if str((data.get("header") or {}).get("resultCode", "")) != "00":
+                raise RuntimeError(f"[CASE-{biz}] 비정상 응답 코드: {data.get('header')}")
+
+            body = data.get("body") or {}
+            items = (body.get("items") or {}).get("item", []) if isinstance(body, dict) else []
+            if isinstance(items, dict):
+                items = [items]
+            if not items:
+                break
+
+            collected.extend(items)
+            total_count = int(body.get("totalCount", 0) or 0)
+            print(f"[CASE:{biz}] {page}p 완료 — 누적 {len(collected)}/{min(per_biz_limit, total_count)}건")
+            if len(collected) >= total_count or len(items) < rows:
+                break
+            page += 1
+            time.sleep(REQUEST_SLEEP_SEC)
+
+        for it in collected:
             bno = str(it.get("boardno", "")).strip()
-            if bno and bno not in seen:
-                seen.add(bno)
-                all_raw.append(it)
+            if bno and bno not in seen_bno:
+                seen_bno.add(bno)
+                all_items.append(it)
+    return all_items
 
-    templates_out, tpl_key_to_id, lite_cases = {}, {}, []
 
-    for idx, item in enumerate(all_raw, 1):
-        title = clean_text(str(item.get("keyword", "")))
-        contents = clean_text(str(item.get("contents", "")))
-        if any(k in title or k in contents for k in EXCLUDE_KEYWORDS):
+# =====================================================================
+# FALLBACK LOADER FOR PARTIAL API OUTAGE RESILIENCE
+# =====================================================================
+
+def _decode_shard_cases(shard):
+    """Decodes both legacy kosha-shard-v2 and compact kosha-shard-v3 shards losslessly."""
+    raw_cases = shard.get("cases", [])
+    if shard.get("format") != "kosha-shard-v3":
+        return raw_cases
+
+    s_dict = shard.get("s_dict") or []
+    m_dict = shard.get("m_dict") or []
+    root_ind = shard.get("industry", "건설현장")
+    st_map = {"F": "FATALITY", "S": "SIF", "C": "CASE"}
+
+    def get_s(val):
+        if isinstance(val, int) and 0 <= val < len(s_dict):
+            return s_dict[val]
+        return str(val or "")
+
+    decoded = []
+    for row in raw_cases:
+        if not isinstance(row, dict):
             continue
-        if len(contents) < 25 or contents == title:
+        st_raw = row.get("st", "C")
+        st = st_map.get(st_raw, st_raw if st_raw in ("FATALITY", "SIF", "CASE") else "CASE")
+        rid = str(row.get("id", ""))
+        bn = row.get("bn")
+        if "sr" in row and row["sr"]:
+            source_ref = row["sr"]
+        elif st == "SIF":
+            source_ref = "한국산업안전보건공단 사망사고 고위험요인(SIF) 아카이브"
+        elif st == "FATALITY":
+            source_ref = f"한국산업안전보건공단 사고사망 속보 ({rid.replace('FATAL-', '')})"
+        elif bn:
+            source_ref = f"한국산업안전보건공단 국내재해사례 ({bn})"
+        else:
+            source_ref = ""
+
+        rec = {
+            "id": rid,
+            "source_type": st,
+            "facts_locked": True,
+            "industry": root_ind,
+            "work_type": get_s(row.get("w")),
+            "equipment": get_s(row.get("e")),
+            "hazard_type": get_s(row.get("h")),
+            "title": row.get("ti", ""),
+            "overview_raw": row.get("ov", ""),
+            "occurred_date": row.get("od", ""),
+            "severity": row.get("sv", "사망"),
+            "season_tag": row.get("sn", "상시"),
+            "source_ref": source_ref,
+            "t": row.get("t", "T01"),
+        }
+        if row.get("ts"):
+            rec["sort_ts"] = row["ts"]
+        if bn:
+            rec["boardno"] = bn
+        if "af" in row:
+            rec["atcflcnt"] = row["af"]
+        if "rg" in row:
+            rec["region"] = get_s(row["rg"])
+        if "pr" in row:
+            rec["process"] = get_s(row["pr"])
+        if "hw" in row:
+            rec["high_risk_work"] = get_s(row["hw"])
+        if "hf" in row:
+            rec["hazard_factor"] = row["hf"]
+        if "s3" in row:
+            rec["summary_3lines"] = row["s3"]
+        if "img" in row:
+            rec["source_image_url"] = row["img"]
+        if "dc" in row:
+            rec["disclaimer"] = row["dc"]
+        elif st == "FATALITY":
+            rec["disclaimer"] = FATALITY_DISCLAIMER_DEFAULT
+        if "pm" in row and isinstance(row["pm"], list):
+            rec["preventive_measures"] = [
+                m_dict[idx] if isinstance(idx, int) and 0 <= idx < len(m_dict) else str(idx)
+                for idx in row["pm"]
+            ]
+        decoded.append(rec)
+    return decoded
+
+
+def load_existing_records_by_source(output_dir):
+    by_source = {"FATALITY": [], "SIF": [], "CASE": []}
+    seen_ids = set()
+    files_to_read = list(SHARD_FILES.values()) + list(SHARD_EXT_FILES.values())
+    for fname in files_to_read:
+        fpath = os.path.join(output_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    shard = json.load(f)
+                for rec in _decode_shard_cases(shard):
+                    rid = rec.get("id")
+                    if rid and rid in seen_ids:
+                        continue
+                    if rid:
+                        seen_ids.add(rid)
+                    st = rec.get("source_type", "CASE")
+                    if st in by_source:
+                        by_source[st].append(rec)
+            except Exception:
+                pass
+    return by_source
+
+
+def deduplicate_and_sort_records(records):
+    """
+    Deduplicates by canonical ID and by (source_type, occurred_date, normalized_title[:28])
+    and orders FATALITY newest-first, followed by SIF and CASE newest-first.
+    """
+    seen_ids = set()
+    seen_fingerprints = set()
+    unique = []
+
+    source_priority = {"FATALITY": 0, "SIF": 1, "CASE": 2}
+    ordered_input = sorted(
+        records,
+        key=lambda r: (
+            source_priority.get(r.get("source_type", "CASE"), 9),
+            r.get("occurred_date", ""),
+        ),
+    )
+
+    for rec in ordered_input:
+        rid = rec["id"]
+        if rid in seen_ids:
             continue
+        seen_ids.add(rid)
 
-        boardno = str(item.get("boardno", f"KOSHA{idx:04d}")).strip()
-        raw_biz = str(item.get("business", "")).strip()
-        full_text = f"{title} {contents}"
-        industry = "건설현장" if "건설" in raw_biz else "제조업" if "제조" in raw_biz else "서비스업"
-        hazard_type = detect_hazard(title, contents)
-        work_type = classify_work_type(industry, title, contents, hazard_type)
-        equipment = extract_equipment(title, contents, work_type)
-        t_key = select_template_key(hazard_type, full_text)
-        t_id = register_template(t_key, templates_out, tpl_key_to_id)
+        norm_title = re.sub(r"\s+", "", rec.get("title", ""))[:28]
+        occ = rec.get("occurred_date", "")
+        if rec.get("source_type") in ("FATALITY", "CASE") and occ and norm_title:
+            fp = f"{occ}|{norm_title}"
+            if fp in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fp)
 
-        prefix = {"건설현장": "CON", "제조업": "MFG", "서비스업": "SVC"}[industry]
+        unique.append(rec)
 
-        lite_cases.append({
-            "id": f"{prefix}-KOSHA-{boardno[-8:]}",
-            "industry": industry,
-            "process": f"{raw_biz} · {work_type}",
-            "work_type": work_type,
-            "equipment": equipment,
-            "hazard_type": hazard_type,
-            "season_tag": "동절기" if any(k in contents for k in ["갈탄", "양생", "결빙", "폭설", "제설"])
-                          else "장마철" if any(k in contents for k in ["우천", "장마", "강풍", "폭우"])
-                          else "혹서기" if any(k in contents for k in ["폭염", "온열", "열사병"])
-                          else "상시",
-            "severity": "사망" if any(k in contents for k in ["사망", "숨"]) else "중대재해",
-            "title": title,
-            "source_ref": f"안전보건공단 국내재해사례 오픈API ({boardno})",
-            "summary_3lines": split_3lines(title, contents),
-            "direct_causes": [
-                f"{equipment} 작업 시 핵심 {hazard_type} 방호조치 미흡",
-                "작업 전 위험요인 확인 및 안전작업절차 미준수",
-                "위험구역 출입 통제 또는 전용 보호구 착용 미흡",
-            ],
-            "keywords": build_keywords(industry, hazard_type, equipment, work_type),
-            "t": t_id,
-        })
+    unique.sort(
+        key=lambda r: (
+            r.get("occurred_date") or "",
+            r.get("sort_ts") or "",
+            r.get("id") or "",
+        ),
+        reverse=True,
+    )
+    return unique
 
-    if not lite_cases:
-        print("ERROR: 유효 사례가 0건입니다.")
+
+def _encode_v3_shard_payload(industry, updated_at, cases_list, templates_out):
+    """
+    Lossless dictionary-encoded shard format (`kosha-shard-v3`):
+    Preserves 100% of verbatim KOSHA facts and SIF measures while cutting raw JSON size ~47%
+    via string interning (`s_dict`), sentence deduplication (`m_dict`), and omitting static defaults.
+    """
+    s_list, s_idx = [], {}
+    m_list, m_idx = [], {}
+
+    def intern_s(val):
+        s = (val or "").strip()
+        if not s:
+            return ""
+        idx = s_idx.get(s)
+        if idx is None:
+            idx = len(s_list)
+            s_idx[s] = idx
+            s_list.append(s)
+        return idx
+
+    def intern_m(val):
+        s = (val or "").strip()
+        idx = m_idx.get(s)
+        if idx is None:
+            idx = len(m_list)
+            m_idx[s] = idx
+            m_list.append(s)
+        return idx
+
+    used_tids = set()
+    compact_cases = []
+
+    for rec in cases_list:
+        st = rec.get("source_type", "CASE")
+        st_code = "F" if st == "FATALITY" else "S" if st == "SIF" else "C"
+        rid = rec["id"]
+        tid = rec.get("t", "T01")
+        if tid in templates_out:
+            used_tids.add(tid)
+
+        row = {
+            "id": rid,
+            "st": st_code,
+            "w": intern_s(rec.get("work_type", "")),
+            "e": intern_s(rec.get("equipment", "")),
+            "h": intern_s(rec.get("hazard_type", "")),
+            "ti": rec.get("title", ""),
+            "ov": rec.get("overview_raw", ""),
+            "t": tid,
+        }
+        if rec.get("occurred_date"):
+            row["od"] = rec["occurred_date"]
+        sort_ts = rec.get("sort_ts", "")
+        if sort_ts and not (st == "SIF" and sort_ts.endswith("000000")):
+            row["ts"] = sort_ts
+        bn = rec.get("boardno")
+        if bn:
+            row["bn"] = bn
+        if rec.get("atcflcnt"):
+            row["af"] = rec["atcflcnt"]
+        if rec.get("region"):
+            row["rg"] = intern_s(rec["region"])
+        if rec.get("season_tag") and rec["season_tag"] != "상시":
+            row["sn"] = rec["season_tag"]
+        if rec.get("severity") and rec["severity"] != "사망":
+            row["sv"] = rec["severity"]
+        if rec.get("process"):
+            row["pr"] = intern_s(rec["process"])
+        if rec.get("high_risk_work"):
+            row["hw"] = intern_s(rec["high_risk_work"])
+        if rec.get("hazard_factor"):
+            row["hf"] = rec["hazard_factor"]
+        if st == "FATALITY" and rec.get("summary_3lines"):
+            row["s3"] = rec["summary_3lines"]
+        if rec.get("source_image_url"):
+            row["img"] = rec["source_image_url"]
+        if rec.get("preventive_measures"):
+            row["pm"] = [intern_m(x) for x in rec["preventive_measures"] if (x or "").strip()]
+
+        # Only store source_ref / disclaimer when non-default
+        sr = (rec.get("source_ref") or "").strip()
+        default_sr = (
+            "한국산업안전보건공단 사망사고 고위험요인(SIF) 아카이브"
+            if st == "SIF"
+            else f"한국산업안전보건공단 사고사망 속보 ({rid.replace('FATAL-', '')})"
+            if st == "FATALITY"
+            else f"한국산업안전보건공단 국내재해사례 ({bn})"
+            if bn
+            else ""
+        )
+        if sr and sr != default_sr:
+            row["sr"] = sr
+
+        dc = (rec.get("disclaimer") or "").strip()
+        if dc and not (st == "FATALITY" and dc == FATALITY_DISCLAIMER_DEFAULT):
+            row["dc"] = dc
+
+        compact_cases.append(row)
+
+    shard_templates = {tid: templates_out[tid] for tid in sorted(used_tids)}
+    return {
+        "format": "kosha-shard-v3",
+        "industry": industry,
+        "updated_at": updated_at,
+        "templates": shard_templates,
+        "s_dict": s_list,
+        "m_dict": m_list,
+        "cases": compact_cases,
+    }
+
+
+def _split_construction_core_and_ext(con_cases):
+    """
+    Splits construction shard into:
+    - core (`db_con.json`): ALL FATALITY + ALL CASE + newest balanced SIF (up to 80 per work_type)
+      so construction loads in <100ms (even faster than service/manufacturing!).
+    - ext (`db_con_sif.json`): remaining older SIF archive loaded quietly in the background.
+    """
+    core, ext = [], []
+    sif_counts_by_wt = Counter()
+
+    for rec in con_cases:
+        if rec.get("source_type") != "SIF":
+            core.append(rec)
+        else:
+            wt = rec.get("work_type", "")
+            if sif_counts_by_wt[wt] < CONSTRUCTION_CORE_SIF_PER_WORKTYPE:
+                sif_counts_by_wt[wt] += 1
+                core.append(rec)
+            else:
+                ext.append(rec)
+    return core, ext
+
+
+def write_sharded_databases(all_records, templates_out, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    updated_at = time.strftime("%Y-%m-%d %H:%M")
+
+    deduped = deduplicate_and_sort_records(all_records)
+    if not deduped:
+        print("ERROR: 저장할 유효 데이터가 0건입니다.")
         sys.exit(1)
 
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    payload = {
-        "format": "kosha-lite-v1",
-        "updated_at": time.strftime("%Y-%m-%d"),
-        "templates": templates_out,
-        "cases": lite_cases,
-    }
-    with open(db_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    industry_buckets = {"건설현장": [], "제조업": [], "서비스업": []}
+    for rec in deduped:
+        ind = rec.get("industry", "건설현장")
+        if ind not in industry_buckets:
+            ind = "건설현장"
+        industry_buckets[ind].append(rec)
 
-    size_kb = os.path.getsize(db_path) / 1024
-    print(f"저장 완료: {len(lite_cases)}건 ({size_kb:.1f} KB) -> {os.path.abspath(db_path)}")
-    print("업종별 분포:", dict(Counter(x["industry"] for x in lite_cases)))
+    shard_stats = {}
+    ext_shards_meta = {}
+
+    for ind, fname in SHARD_FILES.items():
+        fpath = os.path.join(output_dir, fname)
+        all_ind_cases = industry_buckets[ind]
+        src_counter = Counter(c.get("source_type", "CASE") for c in all_ind_cases)
+
+        ext_fname = SHARD_EXT_FILES.get(ind)
+        if ext_fname and len(all_ind_cases) > 1500:
+            core_cases, ext_cases = _split_construction_core_and_ext(all_ind_cases)
+            core_payload = _encode_v3_shard_payload(ind, updated_at, core_cases, templates_out)
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(core_payload, f, ensure_ascii=False, separators=(",", ":"))
+            core_kb = round(os.path.getsize(fpath) / 1024, 1)
+
+            ext_path = os.path.join(output_dir, ext_fname)
+            ext_payload = _encode_v3_shard_payload(ind, updated_at, ext_cases, templates_out)
+            with open(ext_path, "w", encoding="utf-8") as f:
+                json.dump(ext_payload, f, ensure_ascii=False, separators=(",", ":"))
+            ext_kb = round(os.path.getsize(ext_path) / 1024, 1)
+            ext_shards_meta[ind] = ext_fname
+
+            shard_stats[ind] = {
+                "file": fname,
+                "ext_file": ext_fname,
+                "size_kb": core_kb,
+                "ext_size_kb": ext_kb,
+                "total": len(all_ind_cases),
+                "FATALITY": src_counter.get("FATALITY", 0),
+                "SIF": src_counter.get("SIF", 0),
+                "CASE": src_counter.get("CASE", 0),
+            }
+            print(
+                f"  -> {fname}: 코어 {len(core_cases):,}건 ({core_kb} KB) + "
+                f"{ext_fname}: 백그라운드 {len(ext_cases):,}건 ({ext_kb} KB) | 총={len(all_ind_cases):,}건"
+            )
+        else:
+            payload = _encode_v3_shard_payload(ind, updated_at, all_ind_cases, templates_out)
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            kb = round(os.path.getsize(fpath) / 1024, 1)
+
+            shard_stats[ind] = {
+                "file": fname,
+                "size_kb": kb,
+                "total": len(all_ind_cases),
+                "FATALITY": src_counter.get("FATALITY", 0),
+                "SIF": src_counter.get("SIF", 0),
+                "CASE": src_counter.get("CASE", 0),
+            }
+            print(f"  -> {fname}: {len(all_ind_cases):,}건 ({kb} KB) | 출처별={dict(src_counter)}")
+
+    # Build meta_summary.json with overall counts + top 30 latest fatality ticker entries
+    fatality_all = [r for r in deduped if r.get("source_type") == "FATALITY"]
+    fatality_all.sort(
+        key=lambda r: (r.get("occurred_date") or "", r.get("sort_ts") or ""),
+        reverse=True,
+    )
+    recent_fatalities = [
+        {
+            "id": r["id"],
+            "industry": r["industry"],
+            "work_type": r["work_type"],
+            "hazard_type": r["hazard_type"],
+            "equipment": r["equipment"],
+            "occurred_date": r.get("occurred_date", ""),
+            "region": r.get("region", ""),
+            "title": r["title"],
+        }
+        for r in fatality_all[:30]
+    ]
+
+    total_by_source = Counter(r.get("source_type", "CASE") for r in deduped)
+    meta_payload = {
+        "format": "kosha-sharded-v3",
+        "updated_at": updated_at,
+        "shards": SHARD_FILES,
+        "ext_shards": ext_shards_meta,
+        "totals": {
+            "all": len(deduped),
+            "by_industry": {ind: len(industry_buckets[ind]) for ind in SHARD_FILES},
+            "by_source": {
+                "FATALITY": total_by_source.get("FATALITY", 0),
+                "SIF": total_by_source.get("SIF", 0),
+                "CASE": total_by_source.get("CASE", 0),
+            },
+        },
+        "industry_source_counts": shard_stats,
+        "recent_fatalities": recent_fatalities,
+    }
+
+    meta_path = os.path.join(output_dir, "meta_summary.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta_payload, f, ensure_ascii=False, separators=(",", ":"))
+
+    meta_kb = round(os.path.getsize(meta_path) / 1024, 1)
+    print(f"  -> meta_summary.json: ({meta_kb} KB) | 전체 통합 {len(deduped):,}건")
+
+    # Remove superseded single-file lite DB if present so dist/ stays lean
+    if os.path.exists(LEGACY_LITE_PATH):
+        os.remove(LEGACY_LITE_PATH)
+        print(f"  -> 레거시 단일 파일 정리 완료: {LEGACY_LITE_PATH}")
+
+
+def run_pipeline(output_dir, only_sif=False):
+    load_dotenv_file(DEFAULT_ENV_PATH)
+
+    raw_base_key = os.environ.get("KOSHA_API_KEY", "").strip()
+    raw_sif_key = os.environ.get("KOSHA_SIF_API_KEY", "").strip() or raw_base_key
+    raw_fat_key = os.environ.get("KOSHA_FATALITY_API_KEY", "").strip() or raw_base_key
+
+    if not (raw_base_key or raw_sif_key or raw_fat_key):
+        print("ERROR: KOSHA_API_KEY 환경변수가 설정되지 않았습니다. (.env 또는 GitHub Secrets 확인)")
+        sys.exit(1)
+
+    base_key = unquote(raw_base_key)
+    sif_key = unquote(raw_sif_key)
+    fat_key = unquote(raw_fat_key)
+    secrets = [raw_base_key, raw_sif_key, raw_fat_key, base_key, sif_key, fat_key]
+
+    sif_url = os.environ.get("KOSHA_SIF_API_URL", DEFAULT_SIF_URL).strip() or DEFAULT_SIF_URL
+    fat_url = os.environ.get("KOSHA_FATALITY_API_URL", DEFAULT_FATALITY_URL).strip() or DEFAULT_FATALITY_URL
+    fat_call_id = os.environ.get("KOSHA_FATALITY_CALL_API_ID", "1040").strip() or "1040"
+
+    existing_by_source = load_existing_records_by_source(output_dir)
+    templates_out, tpl_key_to_id = {}, {}
+    for t_key in TEMPLATES:
+        register_template(t_key, templates_out, tpl_key_to_id)
+
+    collected_all = []
+
+    # 1. FATALITY (사고사망 게시판 최신 500건)
+    if only_sif and existing_by_source.get("FATALITY"):
+        print(f"[FATALITY 기존 샤드 유지] {len(existing_by_source['FATALITY']):,}건")
+        collected_all.extend(existing_by_source["FATALITY"])
+    else:
+        try:
+            raw_fatalities = fetch_fatality_items(fat_key, fat_url, fat_call_id, FATALITY_LIMIT, secrets)
+            norm_fatalities = [
+                rec for it in raw_fatalities
+                if (rec := normalize_fatality(it, templates_out, tpl_key_to_id)) is not None
+            ]
+            print(f"[FATALITY 정규화 완료] {len(norm_fatalities):,}건")
+            collected_all.extend(norm_fatalities)
+        except Exception as e:
+            print(f"[WARN] 사고사망 게시판 수집 중 일부 오류 발생 — 기존 캐시 보존: {mask_secrets(e, secrets)}")
+            collected_all.extend(existing_by_source.get("FATALITY", []))
+
+    # 2. SIF (사망사고 고위험요인 아카이브 전량: 건설업 + 전업종)
+    try:
+        raw_sifs = fetch_sif_items(sif_key, sif_url, SIF_PER_CATE_LIMIT, secrets)
+        norm_sifs = [
+            rec for it in raw_sifs
+            if (rec := normalize_sif(it, templates_out, tpl_key_to_id)) is not None
+        ]
+        if norm_sifs:
+            print(f"[SIF 정규화 완료] {len(norm_sifs):,}건")
+            collected_all.extend(norm_sifs)
+        else:
+            collected_all.extend(existing_by_source.get("SIF", []))
+    except Exception as e:
+        print(f"[WARN] SIF 아카이브 수집 중 일부 오류 발생 — 기존 캐시 보존: {mask_secrets(e, secrets)}")
+        collected_all.extend(existing_by_source.get("SIF", []))
+
+    # 3. CASE (국내재해사례 게시판)
+    if only_sif and existing_by_source.get("CASE"):
+        print(f"[CASE 기존 샤드 유지] {len(existing_by_source['CASE']):,}건")
+        collected_all.extend(existing_by_source["CASE"])
+    else:
+        try:
+            raw_cases = fetch_disaster_case_items(base_key, PER_BUSINESS_CASE_LIMIT, secrets)
+            norm_cases = [
+                rec for it in raw_cases
+                if (rec := normalize_disaster(it, templates_out, tpl_key_to_id)) is not None
+            ]
+            print(f"[CASE 정규화 완료] {len(norm_cases):,}건")
+            collected_all.extend(norm_cases)
+        except Exception as e:
+            print(f"[WARN] 국내재해사례 수집 중 일부 오류 발생 — 기존 캐시 보존: {mask_secrets(e, secrets)}")
+            collected_all.extend(existing_by_source.get("CASE", []))
+
+    write_sharded_databases(collected_all, templates_out, output_dir)
+
+
+def reclassify_local_shards(output_dir):
+    templates_out, tpl_key_to_id = {}, {}
+    for t_key in TEMPLATES:
+        register_template(t_key, templates_out, tpl_key_to_id)
+
+    existing = load_existing_records_by_source(output_dir)
+    flat = existing["FATALITY"] + existing["SIF"] + existing["CASE"]
+    if not flat:
+        print("ERROR: 로컬 분할 DB 파일을 찾을 수 없습니다.")
+        sys.exit(1)
+
+    updated = []
+    for rec in flat:
+        st = rec.get("source_type", "CASE")
+        title = rec.get("title", "")
+        overview = rec.get("overview_raw") or " ".join(rec.get("summary_3lines") or [])
+        ind = rec.get("industry", "건설현장")
+        if st == "FATALITY":
+            ind = classify_industry_for_unlabeled(title, overview)
+        hazard = detect_hazard(title, overview, explicit_hazard=rec.get("hazard_type"))
+
+        if st == "SIF":
+            eq = (rec.get("sif_meta") or {}).get("orgtNm") or rec.get("equipment") or ""
+            unit_work = rec.get("high_risk_work") or rec.get("process") or ""
+            factor = rec.get("hazard_factor") or ""
+            wt = classify_work_type(ind, f"{eq} {unit_work}", f"{factor} {overview}", hazard)
+            if not eq:
+                eq = extract_equipment(unit_work, overview, wt)
+            title = build_sif_display_title(eq, unit_work, hazard, factor, rec.get("occurred_date", ""))
+            rec["title"] = title
+        else:
+            wt = classify_work_type(ind, title, overview, hazard)
+            eq = extract_equipment(title, overview, wt)
+
+        t_id = register_template(select_template_key(hazard, f"{title} {overview}"), templates_out, tpl_key_to_id)
+        rec["industry"] = ind
+        rec["work_type"] = wt
+        rec["equipment"] = eq
+        rec["hazard_type"] = hazard
+        rec["t"] = t_id
+        updated.append(rec)
+
+    write_sharded_databases(updated, templates_out, output_dir)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="KOSHA 국내재해사례 Lite DB 수집 및 도메인 재분류 스크립트")
+    parser = argparse.ArgumentParser(description="KOSHA 3종 통합 오픈API(FATALITY·SIF·CASE) 수집 및 업종별 샤딩 파이프라인")
     parser.add_argument(
         "--reclassify-local",
         action="store_true",
-        help="API 호출 없이 로컬 public/data/accidents_db_lite.json을 최신 분류기·기인물 추출기로 재분류합니다.",
+        help="외부 API 호출 없이 로컬 분할 JSON DB를 최신 분류기로 재정렬합니다.",
     )
     parser.add_argument(
-        "--db-path",
-        default=OUTPUT_PATH,
-        help=f"입출력 Lite DB 경로 (기본값: {OUTPUT_PATH})",
+        "--only-sif",
+        action="store_true",
+        help="기존 수집된 FATALITY·CASE 샤드는 유지하고 SIF 아카이브만 추가 수집·병합합니다.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=OUTPUT_DIR,
+        help=f"분할 JSON 저장 디렉터리 (기본값: {OUTPUT_DIR})",
     )
     args = parser.parse_args()
 
     if args.reclassify_local:
-        reclassify_local_db(args.db_path)
+        reclassify_local_shards(args.output_dir)
     else:
-        fetch_and_build_db(args.db_path)
+        run_pipeline(args.output_dir, only_sif=args.only_sif)
 
 
 if __name__ == "__main__":

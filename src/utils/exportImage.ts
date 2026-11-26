@@ -45,12 +45,20 @@ async function captureNodeDataUrl(
         pixelRatio: 2,
       };
 
+  const exportFilter = (domNode: HTMLElement): boolean => {
+    if (domNode instanceof HTMLElement && domNode.dataset?.exportHide === 'true') {
+      return false;
+    }
+    return true;
+  };
+
   const fontEmbedCSS = await getCachedFontEmbedCSS(node, getFontEmbedCSS);
 
   try {
     return await toPng(node, {
       cacheBust: true,
       backgroundColor: '#ffffff',
+      filter: exportFilter,
       ...sizeOptions,
       ...(fontEmbedCSS !== undefined ? { fontEmbedCSS } : {}),
     });
@@ -58,6 +66,7 @@ async function captureNodeDataUrl(
     return await toPng(node, {
       cacheBust: true,
       backgroundColor: '#ffffff',
+      filter: exportFilter,
       ...sizeOptions,
       skipFonts: true,
     });
@@ -186,6 +195,18 @@ export async function normalizeLogoFileToDataUrl(
   }
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(',');
+  const mimeMatch = header.match(/data:([^;]+)/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+  const binary = atob(base64 || '');
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
 /**
  * Exports a DOM node (OPS A4 sheet, active 16:9 slide, or single 1:1 card) as high-res PNG.
  */
@@ -199,6 +220,38 @@ export async function downloadNodeAsPng(
   const fileName = `${sanitizeName(baseTitle)}_${dateStr}.png`;
   triggerDownload(dataUrl, fileName);
   return fileName;
+}
+
+/**
+ * Copies a DOM node directly to the system clipboard as a high-res PNG image
+ * so managers can press Ctrl+V / Paste immediately in KakaoTalk, Band, or Messenger.
+ * Returns `'unsupported'` when ClipboardItem image write is unavailable in the browser.
+ */
+export async function copyNodeAsPngToClipboard(
+  node: HTMLElement,
+  targetPixelWidth?: number
+): Promise<'copied' | 'unsupported'> {
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.clipboard ||
+    typeof navigator.clipboard.write !== 'function' ||
+    typeof ClipboardItem === 'undefined'
+  ) {
+    return 'unsupported';
+  }
+
+  const blobPromise = captureNodeDataUrl(node, targetPixelWidth).then(dataUrlToBlob);
+
+  try {
+    // Passing Promise<Blob> to ClipboardItem preserves transient user activation in Safari/WebKit
+    const item = new ClipboardItem({ 'image/png': blobPromise });
+    await navigator.clipboard.write([item]);
+    return 'copied';
+  } catch {
+    const resolvedBlob = await blobPromise;
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': resolvedBlob })]);
+    return 'copied';
+  }
 }
 
 /**
