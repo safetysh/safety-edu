@@ -391,6 +391,122 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           />
         </button>
       </label>
+
+      {/* Phase 2 Toggle 1: Page 1 Legal & Guide Summary Badge */}
+      <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none border-t border-slate-200/80 pt-2">
+        <div>
+          <span className="block text-[12px] font-semibold text-slate-800">
+            1면 법령·지침 요약 표기
+          </span>
+          <span className="block text-[10.5px] text-slate-500">
+            OPS 1면 헤더에 필수 법령·권고 지침 번호 1줄 표기
+          </span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={siteInfo.showPage1LegalSummary}
+          onClick={() =>
+            onUpdateSiteInfo({ showPage1LegalSummary: !siteInfo.showPage1LegalSummary })
+          }
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+            siteInfo.showPage1LegalSummary ? 'bg-slate-900' : 'bg-slate-300'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              siteInfo.showPage1LegalSummary ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </label>
+
+      {/* Phase 2 Toggle 2: Page 2 Reference Appendix Sheet + Conditional Accordion */}
+      <div className="border-t border-slate-200/80 pt-2 space-y-2">
+        <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
+          <div>
+            <span className="block text-[12px] font-semibold text-slate-800">
+              2면 참고 별지 출력 (법령·지침·영상 QR)
+            </span>
+            <span className="block text-[10.5px] text-slate-500">
+              A4 2면 별지 및 PPTX 참고 슬라이드 자동 추가
+            </span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={siteInfo.showPage2Appendix}
+            onClick={() =>
+              onUpdateSiteInfo({ showPage2Appendix: !siteInfo.showPage2Appendix })
+            }
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+              siteInfo.showPage2Appendix ? 'bg-slate-900' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                siteInfo.showPage2Appendix ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </label>
+
+        {siteInfo.showPage2Appendix && (
+          <div className="rounded-md border border-slate-200 bg-white px-2.5 py-2 space-y-1.5 text-[11.2px] text-slate-800">
+            <span className="block text-[10px] font-bold text-slate-500">
+              2면 별지 포함 항목 선택
+            </span>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={siteInfo.appendixSections.laws}
+                onChange={(e) =>
+                  onUpdateSiteInfo({
+                    appendixSections: {
+                      ...siteInfo.appendixSections,
+                      laws: e.target.checked,
+                    },
+                  })
+                }
+                className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+              />
+              <span className="font-semibold">최신 법령 조문 (강제 법규 1순위)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={siteInfo.appendixSections.guides}
+                onChange={(e) =>
+                  onUpdateSiteInfo({
+                    appendixSections: {
+                      ...siteInfo.appendixSections,
+                      guides: e.target.checked,
+                    },
+                  })
+                }
+                className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+              />
+              <span className="font-semibold">기술지원규정 (코샤가이드)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={siteInfo.appendixSections.mediaQr}
+                onChange={(e) =>
+                  onUpdateSiteInfo({
+                    appendixSections: {
+                      ...siteInfo.appendixSections,
+                      mediaQr: e.target.checked,
+                    },
+                  })
+                }
+                className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+              />
+              <span className="font-semibold">공단 교육영상·OPS QR코드</span>
+            </label>
+          </div>
+        )}
+      </div>
     </div>
   );
 

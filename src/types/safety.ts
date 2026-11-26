@@ -178,6 +178,117 @@ export const SOURCE_BRAND_STYLES: Record<SourceType, SourceBrandStyle> = {
   },
 };
 
+export interface LegalAppendixSections {
+  laws: boolean;
+  guides: boolean;
+  mediaQr: boolean;
+}
+
+export type StalenessLevel = 'none' | 'info' | 'critical';
+
+export interface LegalRuleItem {
+  id: string;
+  doc_id: string;
+  tier: 1;
+  tier_label: string;
+  law_name: string;
+  article_no: string;
+  title: string;
+  short_label: string;
+  latest_amended_date: string;
+  content: string;
+}
+
+export interface LegalNoticeItem {
+  id: string;
+  doc_id: string;
+  tier: 2;
+  tier_label: string;
+  title: string;
+  latest_amended_date: string;
+  content: string;
+}
+
+export interface KoshaGuideItem {
+  no: string;
+  name: string;
+  published_date: string;
+  download_url: string;
+  file_format: string;
+}
+
+export interface KoshaGuideGroupRef {
+  no: string;
+  staleness_level: StalenessLevel;
+  staleness_note: string;
+}
+
+export interface ResolvedKoshaGuide extends KoshaGuideItem {
+  staleness_level: StalenessLevel;
+  staleness_note: string;
+}
+
+export interface KoshaMediaItem {
+  doc_id: string;
+  title: string;
+  media_style: string;
+  url: string;
+}
+
+export interface BlockedConflictItem {
+  title: string;
+  reason: string;
+}
+
+export interface LegalWorkGroupEntry {
+  work_type: string;
+  industry: IndustryType;
+  match_keywords: string[];
+  law_ids: string[];
+  notice_ids: string[];
+  blocked_conflicts: BlockedConflictItem[];
+  guides: KoshaGuideGroupRef[];
+  qr_media: KoshaMediaItem[];
+  aux_media: KoshaMediaItem[];
+}
+
+export interface RefsLegalData {
+  format: string;
+  synced_at: string;
+  law_portal_url: string;
+  hierarchy_notice: string;
+  stats: {
+    groups_count: number;
+    laws_count: number;
+    notices_count: number;
+    blocked_conflicts_count: number;
+    guides_catalog_count: number;
+    guides_mapped_count: number;
+    media_mapped_count: number;
+  };
+  laws_by_id: Record<string, LegalRuleItem>;
+  notices_by_id: Record<string, LegalNoticeItem>;
+  guides_by_no: Record<string, KoshaGuideItem>;
+  groups: Record<string, LegalWorkGroupEntry>;
+}
+
+export interface ResolvedLegalReference {
+  matchedGroupKey: string;
+  matchedBy: 'case_keyword' | 'case_worktype' | 'selected_worktype';
+  syncedAt: string;
+  lawPortalUrl: string;
+  hierarchyNotice: string;
+  laws: LegalRuleItem[];
+  notices: LegalNoticeItem[];
+  blockedConflicts: BlockedConflictItem[];
+  guides: ResolvedKoshaGuide[];
+  qrMedia: KoshaMediaItem[];
+  auxMedia: KoshaMediaItem[];
+  primaryLawShort: string;
+  primaryGuideNo: string | null;
+  latestAmendedDate: string;
+}
+
 export interface CustomSiteInfo {
   siteName: string;
   educationDate: string;
@@ -189,6 +300,9 @@ export interface CustomSiteInfo {
   logoFileName: string;
   showTbmSignTable: boolean;
   inkSaverMode: boolean;
+  showPage1LegalSummary: boolean;
+  showPage2Appendix: boolean;
+  appendixSections: LegalAppendixSections;
 }
 
 export interface GeneratedMaterial {

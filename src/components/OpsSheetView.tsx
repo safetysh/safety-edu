@@ -19,7 +19,11 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
+import {
+  CustomSiteInfo,
+  GeneratedMaterial,
+  ResolvedLegalReference,
+} from '../types/safety';
 import { AccidentMechanismDiagram, HazardPictogram } from './SafetyVisuals';
 import {
   getCaseTranslations,
@@ -42,6 +46,7 @@ import {
 interface OpsSheetViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
+  legalRef?: ResolvedLegalReference | null;
   showKytAnswers?: boolean;
   onToggleKytAnswers?: () => void;
   onUpdateMeasures?: (nextMeasures: string[]) => void;
@@ -55,6 +60,7 @@ interface OpsSheetViewProps {
 export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   material,
   siteInfo,
+  legalRef = null,
   showKytAnswers = true,
   onToggleKytAnswers,
   onUpdateMeasures,
@@ -599,10 +605,34 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               </span>
             )}
           </div>
-          <span className="inline-flex items-center gap-1 text-[9.8px] text-slate-600 font-medium keep-all text-right">
-            <Scale className="w-3 h-3 shrink-0" />
-            <span>{c.legal_ref}</span>
-          </span>
+          {siteInfo.showPage1LegalSummary && (
+            <div className="inline-flex items-center justify-end gap-1.5 min-w-0 max-w-[54%] overflow-hidden">
+              <span
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[9px] font-bold truncate ${
+                  inkSaver
+                    ? 'border border-slate-900 bg-white text-slate-950'
+                    : 'bg-slate-800 text-white'
+                }`}
+                title={legalRef?.primaryLawShort || c.legal_ref}
+              >
+                <Scale className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">
+                  필수 법령 · {legalRef?.primaryLawShort || c.legal_ref}
+                </span>
+              </span>
+              {legalRef?.primaryGuideNo && !ultraDense && (
+                <span
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded-sm text-[8.8px] font-semibold border shrink-0 tabular-nums ${
+                    inkSaver
+                      ? 'border-slate-500 bg-white text-slate-800'
+                      : 'border-slate-300 bg-white text-slate-600'
+                  }`}
+                >
+                  권고 · {legalRef.primaryGuideNo}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Locked Factual Cause / SIF Block */}

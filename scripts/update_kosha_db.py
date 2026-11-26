@@ -19,6 +19,10 @@ DISASTER_CASE_URLS = [
 ]
 DEFAULT_SIF_URL = "https://apis.data.go.kr/B552468/sifArchive/view"
 DEFAULT_FATALITY_URL = "https://apis.data.go.kr/B552468/news_api02/getNews_api02"
+DEFAULT_SMART_SEARCH_URL = "https://apis.data.go.kr/B552468/srch/smartSearch"
+DEFAULT_KOSHA_GUIDE_URL = "https://apis.data.go.kr/B552468/koshaguide/getKoshaGuide"
+KOSHA_GUIDE_CALL_API_ID = "1050"
+REFS_LEGAL_FILENAME = "refs_legal.json"
 
 TARGET_BUSINESSES = ["건설업", "제조업", "서비스업"]
 PER_BUSINESS_CASE_LIMIT = 500
@@ -1919,6 +1923,723 @@ def run_pipeline(output_dir, only_sif=False):
 
     write_sharded_databases(collected_all, templates_out, output_dir)
 
+    # 4. Phase 2: 법령·코샤가이드·공단 교육미디어 통합 정제 (refs_legal.json)
+    try:
+        build_legal_references_db(base_key, output_dir, secrets)
+    except Exception as e:
+        print(f"[WARN] Phase 2 법령·지침·미디어 수집 중 오류 발생 — 기존 refs_legal.json 보존: {mask_secrets(e, secrets)}")
+
+
+# =====================================================================
+# PHASE 2: LEGAL RULES (cat 4/5) + KOSHA GUIDE (1050) + MEDIA (cat 6)
+# =====================================================================
+
+LEGAL_NOISE_TITLE_PATTERNS = [
+    "용어의 정의",
+    "용어 정의",
+    "허드슨",
+    "안전문화 측정",
+    "안전문화측정",
+]
+
+# Whitelisted mandatory articles in 산업안전보건기준에 관한 규칙 (cat 4)
+# Every query & article number empirically verified against live smartSearch (cat 4)
+LEGAL_LAW_WHITELIST = [
+    {"id": "R-14", "article_no": "제14조", "query": "낙하물에 의한 위험의 방지", "short_label": "안전보건규칙 제14조(낙하물 위험 방지)"},
+    {"id": "R-24", "article_no": "제24조", "query": "사다리식 통로 등의 구조", "short_label": "안전보건규칙 제24조(사다리식 통로)"},
+    {"id": "R-32", "article_no": "제32조", "query": "보호구의 지급 등", "short_label": "안전보건규칙 제32조(보호구 지급)"},
+    {"id": "R-38", "article_no": "제38조", "query": "작업계획서의 작성", "short_label": "안전보건규칙 제38조(작업계획서)"},
+    {"id": "R-42", "article_no": "제42조", "query": "추락의 방지", "short_label": "안전보건규칙 제42조(추락의 방지)"},
+    {"id": "R-45", "article_no": "제45조", "query": "지붕 위에서의 위험 방지", "short_label": "안전보건규칙 제45조(지붕 위험 방지)"},
+    {"id": "R-68", "article_no": "제68조", "query": "이동식비계", "short_label": "안전보건규칙 제68조(이동식비계)"},
+    {"id": "R-87", "article_no": "제87조", "query": "덮개", "short_label": "안전보건규칙 제87조(원동기·회전축 방지)"},
+    {"id": "R-92", "article_no": "제92조", "query": "정비 등의 작업 시의 운전정지 등", "short_label": "안전보건규칙 제92조(정비 시 운전정지)"},
+    {"id": "R-103", "article_no": "제103조", "query": "프레스 등의 위험 방지", "short_label": "안전보건규칙 제103조(프레스 위험 방지)"},
+    {"id": "R-140", "article_no": "제140조", "query": "폭풍에 의한 이탈 방지", "short_label": "안전보건규칙 제140조(크레인 이탈 방지)"},
+    {"id": "R-146", "article_no": "제146조", "query": "크레인 작업 시의 조치", "short_label": "안전보건규칙 제146조(크레인 작업 조치)"},
+    {"id": "R-163", "article_no": "제163조", "query": "와이어로프", "short_label": "안전보건규칙 제163조(달기구 안전계수)"},
+    {"id": "R-171", "article_no": "제171조", "query": "전도 등의 방지", "short_label": "안전보건규칙 제171조(전도 등의 방지)"},
+    {"id": "R-172", "article_no": "제172조", "query": "접촉의 방지", "short_label": "안전보건규칙 제172조(차량계 하역운반기계 접촉 방지)"},
+    {"id": "R-173", "article_no": "제173조", "query": "화물적재 시의 조치", "short_label": "안전보건규칙 제173조(화물적재 조치)"},
+    {"id": "R-179", "article_no": "제179조", "query": "전조등", "short_label": "안전보건규칙 제179조(지게차 전조등 설치)"},
+    {"id": "R-186", "article_no": "제186조", "query": "고소작업대 설치 등의 조치", "short_label": "안전보건규칙 제186조(고소작업대 조치)"},
+    {"id": "R-191", "article_no": "제191조", "query": "컨베이어", "short_label": "안전보건규칙 제191조(컨베이어 이탈 방지)"},
+    {"id": "R-198", "article_no": "제198조", "query": "건설기계", "short_label": "안전보건규칙 제198조(건설기계 낙하물 보호)"},
+    {"id": "R-232", "article_no": "제232조", "query": "폭발 또는 화재 등의 예방", "short_label": "안전보건규칙 제232조(폭발·화재 예방)"},
+    {"id": "R-239", "article_no": "제239조", "query": "위험물 등이 있는 장소에서 화기 등의 사용 금지", "short_label": "안전보건규칙 제239조(화기 사용 금지)"},
+    {"id": "R-241", "article_no": "제241조", "query": "화재위험작업", "short_label": "안전보건규칙 제241조(화재위험작업)"},
+    {"id": "R-319", "article_no": "제319조", "query": "감전", "short_label": "안전보건규칙 제319조(정전전로 전기작업)"},
+    {"id": "R-321", "article_no": "제321조", "query": "충전전로", "short_label": "안전보건규칙 제321조(충전전로 전기작업)"},
+    {"id": "R-339", "article_no": "제339조", "query": "흙막이", "short_label": "안전보건규칙 제339조(굴착면 붕괴 방지)"},
+    {"id": "R-340", "article_no": "제340조", "query": "흙막이", "short_label": "안전보건규칙 제340조(굴착작업 위험 방지)"},
+    {"id": "R-345", "article_no": "제345조", "query": "흙막이", "short_label": "안전보건규칙 제345조(흙막이지보공)"},
+    {"id": "R-619", "article_no": "제619조", "query": "밀폐공간", "short_label": "안전보건규칙 제619조(밀폐공간 작업 프로그램)"},
+    {"id": "R-619-2", "article_no": "제619조의2", "query": "밀폐공간", "short_label": "안전보건규칙 제619조의2(산소·유해가스 측정)"},
+]
+
+# Conflict Blocklist: outdated cat 5 notices whose thresholds contradict amended cat 4 rules
+CONFLICT_NOTICE_BLOCKLIST = [
+    {
+        "id": "BLK-LADDER-6M",
+        "title_keywords": ["가설공사", "이동식 사다리"],
+        "content_keywords": ["6미터"],
+        "reason": "구버전 고시(가설공사 표준안전 작업지침 제20조 · 사다리 길이 6m 이하)는 2024.06.28 신설 안전보건규칙 제42조 제4항(작업높이 3.5m 이하)과 기준이 상충하여 자동 차단되었습니다.",
+    },
+    {
+        "id": "BLK-LADDER-6M-ALT",
+        "title_keywords": ["표준안전", "사다리"],
+        "content_keywords": ["6m", "초과"],
+        "reason": "구버전 고시(사다리 6m 기준)는 2024.06.28 신설 안전보건규칙 제42조 제4항(작업높이 3.5m 이하)과 기준이 상충하여 자동 차단되었습니다.",
+    },
+]
+
+# Work-type & key hazard reference groups (15 core work types)
+LEGAL_WORK_GROUPS = [
+    {
+        "work_type": "이동식 비계·사다리 작업",
+        "industry": "건설현장",
+        "match_keywords": ["이동식 비계", "이동식비계", "BT비계", "비계", "말비계", "이동식 사다리", "사다리", "A형사다리", "A형 사다리", "발붙임"],
+        "law_ids": ["R-42", "R-68", "R-24"],
+        "notice_query": "이동식 사다리",
+        "media_queries": ["이동식 사다리", "이동식 비계"],
+        "guide_keywords": ["이동식 비계", "이동식비계", "이동식 사다리", "강관비계", "시스템비계", "비계", "작업발판"],
+        "guide_exclude_keywords": ["고정식 사다리"],
+        "guide_preferred_prefixes": ["C", "G"],
+        "critical_rule": {
+            "cutoff_date": "2024-06-28",
+            "applies_to_guide_keywords": ["사다리", "비계", "발판", "추락"],
+            "note": "2024.06.28 신설 안전보건규칙 제42조 ④항(이동식 사다리 작업높이 3.5m 이하 · 아웃트리거/2인1조 · 최상부 발판 금지)이 최신 강제 규정이므로 지침보다 규칙을 우선 적용하세요.",
+        },
+    },
+    {
+        "work_type": "굴착·가시설 토목 작업",
+        "industry": "건설현장",
+        "match_keywords": ["굴착", "굴착기", "포크레인", "흙막이", "가시설", "지보공", "토사", "매몰", "관로", "되메우기", "절토", "사면"],
+        "law_ids": ["R-339", "R-340", "R-345", "R-198"],
+        "notice_query": "굴착공사 표준안전",
+        "media_queries": ["굴착기", "굴착 붕괴"],
+        "guide_keywords": ["굴착", "흙막이", "지보공", "토공사", "굴착기", "사면"],
+        "guide_preferred_prefixes": ["C", "M"],
+    },
+    {
+        "work_type": "철골·지붕 고소 작업",
+        "industry": "건설현장",
+        "match_keywords": ["지붕", "채광창", "선라이트", "슬레이트", "철골", "판넬", "트러스", "단부", "개구부", "추락방호망", "안전대"],
+        "law_ids": ["R-45", "R-42", "R-14"],
+        "notice_query": "지붕 작업",
+        "media_queries": ["지붕 추락", "철골 고소작업"],
+        "guide_keywords": ["지붕", "채광창", "철골", "추락방호망", "개구부", "안전대"],
+        "guide_preferred_prefixes": ["C", "G"],
+    },
+    {
+        "work_type": "타워크레인·양중 작업",
+        "industry": "건설현장",
+        "match_keywords": ["타워크레인", "크레인", "이동식크레인", "호이스트", "양중", "인양", "슬링벨트", "와이어로프", "줄걸이", "달기구", "카고크레인"],
+        "law_ids": ["R-146", "R-163", "R-140"],
+        "notice_query": "양중기 표준안전",
+        "media_queries": ["타워크레인", "크레인 줄걸이"],
+        "guide_keywords": ["타워크레인", "크레인", "양중", "줄걸이", "와이어로프", "이동식크레인"],
+        "guide_preferred_prefixes": ["C", "M"],
+    },
+    {
+        "work_type": "밀폐공간·양생 작업",
+        "industry": "건설현장",
+        "match_keywords": ["밀폐공간", "양생", "갈탄", "열풍기", "맨홀", "정화조", "지하피트", "집수정", "질식", "일산화탄소", "황화수소", "산소결핍"],
+        "law_ids": ["R-619", "R-619-2"],
+        "notice_query": "밀폐공간",
+        "media_queries": ["밀폐공간 질식", "콘크리트 양생"],
+        "guide_keywords": ["밀폐공간", "질식", "산소결핍", "갈탄", "양생", "맨홀"],
+        "guide_preferred_prefixes": ["H", "C", "G"],
+    },
+    {
+        "work_type": "컨베이어·회전체 점검/청소",
+        "industry": "제조업",
+        "match_keywords": ["컨베이어", "회전체", "롤러", "혼합기", "교반기", "사출", "산업용 로봇", "로봇", "LOTO", "끼임", "협착", "정비"],
+        "law_ids": ["R-92", "R-191", "R-87"],
+        "notice_query": "컨베이어",
+        "media_queries": ["컨베이어 끼임", "정비보수 LOTO"],
+        "guide_keywords": ["컨베이어", "잠금", "LOTO", "회전체", "로봇", "정비", "방호장치"],
+        "guide_preferred_prefixes": ["M", "G", "E"],
+    },
+    {
+        "work_type": "프레스·절곡·전단기 작업",
+        "industry": "제조업",
+        "match_keywords": ["프레스", "전단기", "절곡기", "금형", "샤링", "펀칭", "절단기", "선반", "밀링", "목재가공"],
+        "law_ids": ["R-103", "R-92", "R-87"],
+        "notice_query": "프레스",
+        "media_queries": ["프레스 끼임", "전단기 절곡기"],
+        "guide_keywords": ["프레스", "전단기", "절곡", "방호장치", "기계기구"],
+        "guide_preferred_prefixes": ["M", "G"],
+    },
+    {
+        "work_type": "지게차·물류 하역 작업",
+        "industry": "제조업",
+        "match_keywords": ["지게차", "포크리프트", "톤백", "파렛트", "하역", "적재", "상하차", "화물차", "부딪힘"],
+        "law_ids": ["R-172", "R-179", "R-38"],
+        "notice_query": "지게차",
+        "media_queries": ["지게차 부딪힘", "지게차 안전"],
+        "guide_keywords": ["지게차", "하역", "적재", "운반기계"],
+        "guide_exclude_keywords": ["공기질"],
+        "guide_preferred_prefixes": ["M", "G"],
+    },
+    {
+        "work_type": "고소작업대·설비 보수",
+        "industry": "제조업",
+        "match_keywords": ["고소작업대", "시저형", "렌탈", "스카이차", "차량탑재형", "과상승방지", "설비 보수", "천장크레인"],
+        "law_ids": ["R-186", "R-42"],
+        "notice_query": "고소작업대",
+        "media_queries": ["고소작업대", "과상승방지"],
+        "guide_keywords": ["고소작업대", "과상승", "차량탑재형", "추락방지"],
+        "guide_preferred_prefixes": ["M", "C", "G"],
+        "critical_rule": {
+            "cutoff_date": "2022-10-18",
+            "applies_to_guide_keywords": ["고소작업대", "과상승"],
+            "note": "안전보건규칙 제186조(고소작업대 과상승방지장치·안전대 체결·아웃트리거 등) 개정 기준을 최신 규칙 원문과 반드시 대조하세요.",
+        },
+    },
+    {
+        "work_type": "화학물질·밀폐탱크 작업",
+        "industry": "제조업",
+        "match_keywords": ["화학물질", "화학설비", "저장탱크", "밀폐탱크", "인화성", "신너", "용접", "용단", "화기작업", "폭발", "화재", "배관 플랜지"],
+        "law_ids": ["R-239", "R-241", "R-619"],
+        "notice_query": "화기작업",
+        "media_queries": ["화재 폭발 용접", "화학물질 탱크"],
+        "guide_keywords": ["화기작업", "저장탱크", "폭발", "인화성", "화학설비", "정전기"],
+        "guide_preferred_prefixes": ["P", "D", "H", "G"],
+    },
+    {
+        "work_type": "물류창고 상하차·지게차 작업",
+        "industry": "서비스업",
+        "match_keywords": ["물류창고", "물류센터", "도크", "도크레벨러", "윙바디", "상하차", "고임목", "택배", "화물적재"],
+        "law_ids": ["R-172", "R-173", "R-171"],
+        "notice_query": "화물적재",
+        "media_queries": ["물류창고 상하차", "지게차 도크"],
+        "guide_keywords": ["지게차", "하역", "적재", "상하차", "운반기계"],
+        "guide_exclude_keywords": ["공기질"],
+        "guide_preferred_prefixes": ["M", "G"],
+    },
+    {
+        "work_type": "건물 시설관리·조명 교체",
+        "industry": "서비스업",
+        "match_keywords": ["시설관리", "건물관리", "조명", "전등", "분전반", "배전반", "정전작업", "감전", "충전부", "승강기", "엘리베이터"],
+        "law_ids": ["R-42", "R-319", "R-321"],
+        "notice_query": "이동식 사다리",
+        "media_queries": ["건물관리 사다리", "감전 정전작업"],
+        "guide_keywords": ["감전", "정전작업", "저압전기", "누전차단기", "전기작업"],
+        "guide_preferred_prefixes": ["E", "G"],
+        "critical_rule": {
+            "cutoff_date": "2024-06-28",
+            "applies_to_guide_keywords": ["사다리", "비계", "추락"],
+            "note": "2024.06.28 신설 안전보건규칙 제42조 ④항(이동식 사다리 작업높이 3.5m 이하 · 아웃트리거/2인1조 · 최상부 발판 금지)이 최신 강제 규정이므로 지침보다 규칙을 우선 적용하세요.",
+        },
+    },
+    {
+        "work_type": "폐기물 파쇄·압축기 작업",
+        "industry": "서비스업",
+        "match_keywords": ["파쇄기", "압축기", "분쇄기", "폐기물", "재활용", "선별", "수거차량", "압착", "호퍼"],
+        "law_ids": ["R-92", "R-87"],
+        "notice_query": "파쇄기",
+        "media_queries": ["파쇄기 끼임", "폐기물 압축기"],
+        "guide_keywords": ["파쇄기", "분쇄기", "압축기", "잠금", "LOTO", "끼임"],
+        "guide_preferred_prefixes": ["M", "G"],
+    },
+    {
+        "work_type": "주방·조리실 화상/절단 작업",
+        "industry": "서비스업",
+        "match_keywords": ["주방", "조리실", "조리", "음식점", "식품가공", "육절기", "세절기", "튀김", "화상", "열탕", "급식"],
+        "law_ids": ["R-87", "R-232"],
+        "notice_query": "식품가공",
+        "media_queries": ["음식점 주방 안전", "조리실 화상 절단"],
+        "guide_keywords": ["식품가공", "조리", "식품포장", "화상", "주방"],
+        "guide_preferred_prefixes": ["M", "H", "G"],
+    },
+    {
+        "work_type": "배달·이륜차 운행 작업",
+        "industry": "서비스업",
+        "match_keywords": ["배달", "이륜차", "이륜자동차", "오토바이", "라이더", "퀵서비스", "교통사고"],
+        "law_ids": ["R-32", "R-38"],
+        "notice_query": "이륜자동차",
+        "media_queries": ["배달 이륜차", "이륜차 안전운전"],
+        "guide_keywords": ["이륜차", "배달", "안전모", "교통", "운전", "차량"],
+        "guide_exclude_keywords": ["피부보호구", "청력보호구", "호흡보호구"],
+        "guide_preferred_prefixes": ["G", "H"],
+    },
+]
+
+QR_MEDIA_PRIORITY = {"동영상": 4, "OPS": 3, "포스터": 2, "리플릿": 1}
+AUX_MEDIA_STYLES = {"교안(PPT)", "책자"}
+
+
+def extract_guide_domain_prefix(guide_no):
+    """Extract domain letter for both legacy (C-59-2022 -> C) and 2025+ (D-C-7-2026 -> C, B-M-11-2025 -> M)."""
+    parts = [p.strip().upper() for p in str(guide_no or "").split("-") if p.strip()]
+    if len(parts) >= 4 and len(parts[0]) == 1 and len(parts[1]) == 1 and parts[1].isalpha():
+        return parts[1]
+    return parts[0] if parts else ""
+
+
+def clean_legal_text(raw_text):
+    if not raw_text:
+        return ""
+    text = html.unescape(str(raw_text))
+    # Remove smartSearch highlight tags and broken KOSHA internal /upload/nfs/ images
+    text = re.sub(r"</?em\b[^>]*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<img\b[^>]*>", "", text, flags=re.IGNORECASE)
+    # Remove any other HTML tags except legal amendment tags like <개정 2024.6.28> / <신설 ...>
+    text = re.sub(r"</?(?:div|span|p|br|table|tr|td|th|ul|ol|li|b|strong|i|a)\b[^>]*>", "\n", text, flags=re.IGNORECASE)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = []
+    for ln in text.split("\n"):
+        cleaned = re.sub(r"[ \t\u00a0]+", " ", ln).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def extract_latest_amended_date(text):
+    if not text:
+        return ""
+    dates = []
+    for tag in re.findall(r"<(?:개정|신설|전문개정|제목개정)[^>]+>", text):
+        for y, m, d in re.findall(r"(19\d{2}|20\d{2})\.(\d{1,2})\.(\d{1,2})", tag):
+            dates.append(f"{int(y):04d}-{int(m):02d}-{int(d):02d}")
+    return max(dates) if dates else ""
+
+
+def is_noise_legal_title(title):
+    t = str(title or "").strip()
+    if not t:
+        return True
+    for pat in LEGAL_NOISE_TITLE_PATTERNS:
+        if pat in t:
+            return True
+    if re.search(r"제\d+조\s*\(?정의\)?$", t):
+        return True
+    return False
+
+
+def _smart_search_items(service_key, search_value, category, num_of_rows, secrets):
+    data = _get_json_with_retry(
+        DEFAULT_SMART_SEARCH_URL,
+        {
+            "serviceKey": service_key,
+            "searchValue": search_value,
+            "category": str(category),
+            "pageNo": 1,
+            "numOfRows": num_of_rows,
+            "dataType": "JSON",
+        },
+        secrets,
+        f"SMARTSEARCH-cat{category}",
+    )
+    resp = data.get("response") or data
+    hdr = resp.get("header") or {}
+    if str(hdr.get("resultCode", "")) != "00":
+        return []
+    body = resp.get("body") or {}
+    raw_items = (body.get("items") or {}).get("item") if isinstance(body.get("items"), dict) else body.get("items")
+    if isinstance(raw_items, dict):
+        raw_items = [raw_items]
+    return raw_items or []
+
+
+def fetch_whitelisted_laws(service_key, secrets):
+    """Fetch exact latest text for every whitelisted mandatory rule article (cat 4)."""
+    laws_by_id = {}
+    query_cache = {}
+    for spec in LEGAL_LAW_WHITELIST:
+        q = spec["query"]
+        if q not in query_cache:
+            try:
+                query_cache[q] = _smart_search_items(service_key, q, 4, 25, secrets)
+            except Exception as e:
+                print(f"[WARN] smartSearch cat4 '{q}' 실패: {mask_secrets(e, secrets)}")
+                query_cache[q] = []
+            time.sleep(0.12)
+
+        candidates = query_cache[q]
+        art_no = spec["article_no"]
+        art_re = re.compile(rf"^{re.escape(art_no)}(?:\s|\(|$)")
+
+        matched = None
+        for it in candidates:
+            title = str(it.get("title") or "").strip()
+            if is_noise_legal_title(title):
+                continue
+            if art_re.search(title):
+                matched = it
+                break
+        if not matched:
+            for it in candidates:
+                title = str(it.get("title") or "").strip()
+                if is_noise_legal_title(title):
+                    continue
+                if art_no in title:
+                    matched = it
+                    break
+
+        if not matched:
+            print(f"  [SKIP] 화이트리스트 조문 미발견: {spec['id']} ({art_no} {q})")
+            continue
+
+        content_clean = clean_legal_text(matched.get("content") or "")
+        if not content_clean:
+            continue
+        latest_date = extract_latest_amended_date(content_clean)
+        title_clean = re.sub(r"\s+", " ", str(matched.get("title") or "")).strip()
+
+        laws_by_id[spec["id"]] = {
+            "id": spec["id"],
+            "doc_id": str(matched.get("doc_id") or "").strip(),
+            "tier": 1,
+            "tier_label": "강제 법규",
+            "law_name": "산업안전보건기준에 관한 규칙",
+            "article_no": art_no,
+            "title": title_clean,
+            "short_label": spec["short_label"],
+            "latest_amended_date": latest_date,
+            "content": content_clean,
+        }
+
+    print(f"[Phase 2] 안전보건규칙(cat 4) 화이트리스트 동기화 완료: {len(laws_by_id)}/{len(LEGAL_LAW_WHITELIST)}조항")
+    return laws_by_id
+
+
+def fetch_all_kosha_guides(service_key, secrets):
+    """Fetch complete KOSHA GUIDE catalog (~1,039 items) via getKoshaGuide (callApiId=1050)."""
+    all_guides = []
+    page = 1
+    while page <= 25:
+        data = _get_json_with_retry(
+            DEFAULT_KOSHA_GUIDE_URL,
+            {
+                "serviceKey": service_key,
+                "callApiId": KOSHA_GUIDE_CALL_API_ID,
+                "pageNo": page,
+                "numOfRows": 100,
+                "dataType": "JSON",
+            },
+            secrets,
+            f"KOSHAGUIDE-p{page}",
+        )
+        resp = data.get("response") or data
+        hdr = resp.get("header") or {}
+        if str(hdr.get("resultCode", "")) != "00":
+            raise RuntimeError(f"[KOSHAGUIDE] 비정상 응답: {hdr}")
+        body = resp.get("body") or {}
+        items = (body.get("items") or {}).get("item") if isinstance(body.get("items"), dict) else body.get("items")
+        if isinstance(items, dict):
+            items = [items]
+        items = items or []
+        if not items:
+            break
+
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            no = str(it.get("techGdlnNo") or "").strip()
+            nm = re.sub(r"\s+", " ", str(it.get("techGdlnNm") or "")).strip()
+            ymd = str(it.get("techGdlnOfancYmd") or "").strip()[:10]
+            url = str(it.get("fileDownloadUrl") or "").strip()
+            if no and nm:
+                all_guides.append({
+                    "no": no,
+                    "prefix": extract_guide_domain_prefix(no),
+                    "name": nm,
+                    "published_date": ymd,
+                    "download_url": url,
+                    "file_format": "PDF",
+                })
+
+        total_count = int(body.get("totalCount", 0) or 0)
+        if len(all_guides) >= total_count or len(items) < 100:
+            break
+        page += 1
+        time.sleep(0.12)
+
+    print(f"[Phase 2] 코샤가이드 전량 수집 완료: {len(all_guides):,}건 ({page}p)")
+    return all_guides
+
+
+def match_guides_for_group(all_guides, group_cfg, group_latest_amended_date, synced_date):
+    kws = group_cfg.get("guide_keywords") or []
+    exclude_kws = [ek.lower() for ek in (group_cfg.get("guide_exclude_keywords") or [])]
+    pref_prefixes = set(group_cfg.get("guide_preferred_prefixes") or [])
+    scored = []
+
+    for g in all_guides:
+        nm_lower = g["name"].lower()
+        if any(ek in nm_lower for ek in exclude_kws):
+            continue
+        score = 0
+        hits = 0
+        for idx, kw in enumerate(kws):
+            if kw.lower() in nm_lower:
+                hits += 1
+                score += 24 if idx < 2 else 14
+        if hits == 0:
+            continue
+        if g["prefix"] == "A" and "A" not in pref_prefixes:
+            score -= 25
+        elif g["prefix"] in pref_prefixes:
+            score += 12
+        # Recency boost so latest 2023~2026 revised KOSHA GUIDEs rank above decade-old editions
+        pub_year = int(g["published_date"][:4]) if len(g["published_date"]) >= 4 and g["published_date"][:4].isdigit() else 2000
+        score += max(0, pub_year - 2010) * 1.1
+        if score > 0:
+            scored.append((score, g["published_date"], g))
+
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    selected = []
+    seen_nos = set()
+    synced_year = int(synced_date[:4])
+
+    critical_cfg = group_cfg.get("critical_rule")
+
+    for _, _, g in scored:
+        if g["no"] in seen_nos:
+            continue
+        seen_nos.add(g["no"])
+
+        pub_date = g["published_date"]
+        pub_year = int(pub_date[:4]) if len(pub_date) >= 4 and pub_date[:4].isdigit() else 0
+
+        staleness_level = "none"
+        staleness_note = ""
+
+        critical_applies = False
+        if critical_cfg and pub_date and pub_date < critical_cfg["cutoff_date"]:
+            scope_kws = critical_cfg.get("applies_to_guide_keywords") or []
+            if not scope_kws or any(sk in g["name"] for sk in scope_kws):
+                critical_applies = True
+
+        if critical_applies:
+            staleness_level = "critical"
+            staleness_note = critical_cfg["note"]
+        elif (
+            (group_latest_amended_date and pub_date and pub_date < group_latest_amended_date)
+            or (pub_year > 0 and (synced_year - pub_year) >= 5)
+        ):
+            staleness_level = "info"
+            staleness_note = f"공표 {pub_year}년 · 최신 안전보건규칙 대조 권장" if pub_year else "최신 안전보건규칙 대조 권장"
+
+        selected.append({
+            "guide": g,
+            "staleness_level": staleness_level,
+            "staleness_note": staleness_note,
+        })
+        if len(selected) >= 3:
+            break
+
+    return selected
+
+
+def check_conflict_blocklist(title, content):
+    t = str(title or "")
+    c = str(content or "")
+    for rule in CONFLICT_NOTICE_BLOCKLIST:
+        t_ok = all(k in t for k in rule["title_keywords"])
+        c_ok = all(k in c for k in rule["content_keywords"])
+        if t_ok and c_ok:
+            return rule["reason"]
+    return None
+
+
+def fetch_media_for_group(service_key, group_cfg, secrets):
+    """Fetch cat 6 KOSHA media and strictly filter/sort in Python (server ctgr01 is unreliable)."""
+    qr_candidates = []
+    aux_candidates = []
+    seen_urls = set()
+
+    for q in group_cfg.get("media_queries") or []:
+        try:
+            items = _smart_search_items(service_key, q, 6, 25, secrets)
+        except Exception as e:
+            print(f"[WARN] smartSearch cat6 '{q}' 실패: {mask_secrets(e, secrets)}")
+            items = []
+        time.sleep(0.12)
+
+        for it in items:
+            style = str(it.get("media_style") or "").strip()
+            url = str(it.get("filepath") or "").strip()
+            title = re.sub(r"\s+", " ", str(it.get("title") or "")).strip()
+            if not title or not url.startswith("https://portal.kosha.or.kr/"):
+                continue
+            if url in seen_urls or is_noise_legal_title(title):
+                continue
+            seen_urls.add(url)
+
+            score_val = float(it.get("score") or 0)
+            entry = {
+                "doc_id": str(it.get("doc_id") or "").strip(),
+                "title": title,
+                "media_style": style,
+                "url": url,
+            }
+            if style in QR_MEDIA_PRIORITY:
+                qr_candidates.append((QR_MEDIA_PRIORITY[style], score_val, entry))
+            elif style in AUX_MEDIA_STYLES:
+                aux_candidates.append((score_val, entry))
+
+    # Pick balanced top 4 QR media (prioritizing at least 1 동영상 and 1 OPS when available)
+    qr_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    qr_selected = []
+    by_style = {}
+    for _, _, item in qr_candidates:
+        by_style.setdefault(item["media_style"], []).append(item)
+
+    for preferred in ("동영상", "OPS", "포스터", "리플릿"):
+        if by_style.get(preferred) and len(qr_selected) < 4:
+            qr_selected.append(by_style[preferred].pop(0))
+    for _, _, item in qr_candidates:
+        if len(qr_selected) >= 4:
+            break
+        if all(x["url"] != item["url"] for x in qr_selected):
+            qr_selected.append(item)
+
+    aux_candidates.sort(key=lambda x: x[0], reverse=True)
+    aux_selected = [item for _, item in aux_candidates[:3]]
+    return qr_selected, aux_selected
+
+
+def build_legal_references_db(service_key, output_dir, secrets):
+    synced_at = time.strftime("%Y-%m-%d")
+    out_path = os.path.join(output_dir, REFS_LEGAL_FILENAME)
+
+    laws_by_id = fetch_whitelisted_laws(service_key, secrets)
+    if len(laws_by_id) < 10:
+        raise RuntimeError(f"안전보건규칙 수집 건수 부족({len(laws_by_id)}건) — 기존 파일 유지")
+
+    all_guides = fetch_all_kosha_guides(service_key, secrets)
+    if len(all_guides) < 100:
+        raise RuntimeError(f"코샤가이드 수집 건수 부족({len(all_guides)}건) — 기존 파일 유지")
+
+    notices_by_id = {}
+    guides_by_no = {}
+    groups_out = {}
+    total_blocked = 0
+    total_media = 0
+
+    for gcfg in LEGAL_WORK_GROUPS:
+        wt = gcfg["work_type"]
+        valid_law_ids = [lid for lid in gcfg["law_ids"] if lid in laws_by_id]
+        group_latest_amended = max(
+            (laws_by_id[lid]["latest_amended_date"] for lid in valid_law_ids if laws_by_id[lid]["latest_amended_date"]),
+            default="",
+        )
+
+        # Check cat 5 notices and actively filter Conflict Blocklist
+        notice_ids = []
+        blocked_conflicts = []
+        nq = gcfg.get("notice_query")
+        if nq:
+            try:
+                cat5_items = _smart_search_items(service_key, nq, 5, 5, secrets)
+            except Exception:
+                cat5_items = []
+            time.sleep(0.1)
+
+            for it in cat5_items:
+                ntitle = re.sub(r"\s+", " ", str(it.get("title") or "")).strip()
+                ncontent = clean_legal_text(it.get("content") or "")
+                if is_noise_legal_title(ntitle) or not ncontent:
+                    continue
+                conflict_reason = check_conflict_blocklist(ntitle, ncontent)
+                if conflict_reason:
+                    blocked_conflicts.append({"title": ntitle, "reason": conflict_reason})
+                    total_blocked += 1
+                    continue
+                if len(notice_ids) < 1:
+                    nid = "N-" + hashlib.sha1(ntitle.encode("utf-8")).hexdigest()[:8].upper()
+                    if nid not in notices_by_id:
+                        notices_by_id[nid] = {
+                            "id": nid,
+                            "doc_id": str(it.get("doc_id") or "").strip(),
+                            "tier": 2,
+                            "tier_label": "고시·표준안전작업지침",
+                            "title": ntitle,
+                            "latest_amended_date": extract_latest_amended_date(ncontent),
+                            "content": ncontent[:900],
+                        }
+                    notice_ids.append(nid)
+
+        matched_guides = match_guides_for_group(all_guides, gcfg, group_latest_amended, synced_at)
+        group_guide_refs = []
+        for mg in matched_guides:
+            g = mg["guide"]
+            if g["no"] not in guides_by_no:
+                guides_by_no[g["no"]] = {
+                    "no": g["no"],
+                    "name": g["name"],
+                    "published_date": g["published_date"],
+                    "download_url": g["download_url"],
+                    "file_format": g["file_format"],
+                }
+            group_guide_refs.append({
+                "no": g["no"],
+                "staleness_level": mg["staleness_level"],
+                "staleness_note": mg["staleness_note"],
+            })
+
+        qr_media, aux_media = fetch_media_for_group(service_key, gcfg, secrets)
+        total_media += len(qr_media) + len(aux_media)
+
+        groups_out[wt] = {
+            "work_type": wt,
+            "industry": gcfg["industry"],
+            "match_keywords": gcfg["match_keywords"],
+            "law_ids": valid_law_ids,
+            "notice_ids": notice_ids,
+            "blocked_conflicts": blocked_conflicts,
+            "guides": group_guide_refs,
+            "qr_media": qr_media,
+            "aux_media": aux_media,
+        }
+
+    payload = {
+        "format": "kosha-legal-refs-v1",
+        "synced_at": synced_at,
+        "law_portal_url": "https://www.law.go.kr/법령/산업안전보건기준에관한규칙",
+        "hierarchy_notice": "※ 기술지원규정(KOSHA GUIDE) 및 고시는 참고 기준이며, 기준 상충 시 반드시 최신 산업안전보건기준에 관한 규칙이 우선 적용됩니다.",
+        "stats": {
+            "groups_count": len(groups_out),
+            "laws_count": len(laws_by_id),
+            "notices_count": len(notices_by_id),
+            "blocked_conflicts_count": total_blocked,
+            "guides_catalog_count": len(all_guides),
+            "guides_mapped_count": len(guides_by_no),
+            "media_mapped_count": total_media,
+        },
+        "laws_by_id": laws_by_id,
+        "notices_by_id": notices_by_id,
+        "guides_by_no": guides_by_no,
+        "groups": groups_out,
+    }
+
+    os.makedirs(output_dir, exist_ok=True)
+    tmp_path = out_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp_path, out_path)
+
+    size_kb = round(os.path.getsize(out_path) / 1024, 1)
+    print(
+        f"[Phase 2 완료] {REFS_LEGAL_FILENAME}: {size_kb} KB | "
+        f"공종 {len(groups_out)}종 · 규칙 {len(laws_by_id)}조 · 고시 {len(notices_by_id)}건 · "
+        f"충돌차단 {total_blocked}건 · 코샤가이드 {len(guides_by_no)}종(전체 {len(all_guides)}건) · 미디어 {total_media}건"
+    )
+    return payload
+
+
+def run_only_legal_pipeline(output_dir):
+    load_dotenv_file(DEFAULT_ENV_PATH)
+    raw_base_key = os.environ.get("KOSHA_API_KEY", "").strip()
+    if not raw_base_key:
+        print("ERROR: KOSHA_API_KEY 환경변수가 설정되지 않았습니다.")
+        sys.exit(1)
+    base_key = unquote(raw_base_key)
+    build_legal_references_db(base_key, output_dir, [raw_base_key, base_key])
+
 
 def reclassify_local_shards(output_dir):
     templates_out, tpl_key_to_id = {}, {}
@@ -1966,7 +2687,7 @@ def reclassify_local_shards(output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="KOSHA 3종 통합 오픈API(FATALITY·SIF·CASE) 수집 및 업종별 샤딩 파이프라인")
+    parser = argparse.ArgumentParser(description="KOSHA 통합 오픈API(재해·SIF·사망속보·법령·코샤가이드·미디어) 수집 파이프라인")
     parser.add_argument(
         "--reclassify-local",
         action="store_true",
@@ -1978,6 +2699,11 @@ def main():
         help="기존 수집된 FATALITY·CASE 샤드는 유지하고 SIF 아카이브만 추가 수집·병합합니다.",
     )
     parser.add_argument(
+        "--only-legal",
+        action="store_true",
+        help="1단계 DB는 유지하고 2단계 법령·코샤가이드·공단 미디어(refs_legal.json)만 갱신합니다.",
+    )
+    parser.add_argument(
         "--output-dir",
         default=OUTPUT_DIR,
         help=f"분할 JSON 저장 디렉터리 (기본값: {OUTPUT_DIR})",
@@ -1986,6 +2712,8 @@ def main():
 
     if args.reclassify_local:
         reclassify_local_shards(args.output_dir)
+    elif args.only_legal:
+        run_only_legal_pipeline(args.output_dir)
     else:
         run_pipeline(args.output_dir, only_sif=args.only_sif)
 

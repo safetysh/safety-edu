@@ -1,5 +1,9 @@
 import type PptxGenJS from 'pptxgenjs';
-import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
+import {
+  CustomSiteInfo,
+  GeneratedMaterial,
+  ResolvedLegalReference,
+} from '../types/safety';
 import {
   getCaseTranslations,
   getForeignLanguageNativeLabel,
@@ -15,6 +19,7 @@ import {
   getSourceBrandStyle,
   isOfficialKoshaApiCase,
 } from './textFit';
+import { generateLocalQrDataUrl } from './qrLocal';
 
 const FONT = 'Malgun Gothic';
 
@@ -23,14 +28,16 @@ function sanitizeFileName(text: string): string {
 }
 
 /**
- * Generates an editable 5-slide 16:9 PowerPoint presentation (.pptx)
+ * Generates an editable 5- or 6-slide 16:9 PowerPoint presentation (.pptx)
  * using pptxgenjs completely client-side with zero external API calls.
  * Synchronizes source identity colors (FATALITY/SIF/CASE), verbatim facts,
- * inline-edited field measures & TBM items, and automatic attribution switching.
+ * inline-edited field measures & TBM items, automatic attribution switching,
+ * and optional Slide 6 Reference Appendix (laws, KOSHA GUIDE, local QR codes).
  */
 export async function downloadSafetyPptx(
   material: GeneratedMaterial,
-  siteInfo: CustomSiteInfo
+  siteInfo: CustomSiteInfo,
+  legalRef: ResolvedLegalReference | null = null
 ): Promise<string> {
   const { default: PptxGenJSRuntime } = await import('pptxgenjs');
   const pptx = new PptxGenJSRuntime();
@@ -41,6 +48,8 @@ export async function downloadSafetyPptx(
   pptx.subject = `${material.selectedIndustry} · ${material.primaryCase.hazard_type} 재해예방`;
 
   const { primaryCase: c, relatedCase, theme, isExactMatch } = material;
+  const includeAppendixSlide = Boolean(siteInfo.showPage2Appendix && legalRef);
+  const totalSlides = includeAppendixSlide ? 6 : 5;
   const isOfficialKosha = isOfficialKoshaApiCase(c);
   const sourceBrand = getSourceBrandStyle(c);
   const sourceBadgeText = formatSourceHeaderBadge(c);
@@ -168,7 +177,7 @@ export async function downloadSafetyPptx(
       }
     );
 
-    slide.addText(`${pageNum} / 5`, {
+    slide.addText(`${pageNum} / ${totalSlides}`, {
       x: 8.6,
       y: 5.24,
       w: 0.95,
@@ -1319,6 +1328,241 @@ export async function downloadSafetyPptx(
         fontFace: FONT,
         fontSize: 8,
         color: 'CBD5E1',
+      });
+    }
+  }
+
+  // =========================================================================
+  // SLIDE 6 (Optional): 참고 — 관련 최신 법령·기술지침 및 공단 교육미디어 QR
+  // =========================================================================
+  if (includeAppendixSlide && legalRef) {
+    const slide = pptx.addSlide();
+    addSlideChrome(slide, 6, '참고. 관련 최신 법령 · 기술지원규정(KOSHA GUIDE) · 공단 교육미디어');
+
+    // Fixed Legal Hierarchy Notice Banner
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0.45,
+      y: 0.78,
+      w: 9.1,
+      h: 0.34,
+      fill: { color: 'FFFBEB' },
+      line: { color: 'FCD34D', width: 0.8 },
+    });
+    slide.addText(legalRef.hierarchyNotice, {
+      x: 0.58,
+      y: 0.78,
+      w: 8.85,
+      h: 0.34,
+      fontFace: FONT,
+      fontSize: 8.6,
+      bold: true,
+      color: '92400E',
+      valign: 'middle',
+    });
+
+    const sec = siteInfo.appendixSections;
+    const showMedia = Boolean(sec?.mediaQr && legalRef.qrMedia.length > 0);
+    const leftW = showMedia ? 5.75 : 9.1;
+
+    // Left column: Tier 1 Laws + Tier 3 KOSHA GUIDE
+    let curY = 1.22;
+
+    if (sec?.laws && legalRef.laws.length > 0) {
+      const lawBoxH = sec?.guides ? 2.15 : 3.85;
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: curY,
+        w: leftW,
+        h: lawBoxH,
+        fill: { color: 'F8FAFC' },
+        line: { color: 'CBD5E1', width: 0.8 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: curY,
+        w: leftW,
+        h: 0.32,
+        fill: { color: '0F172A' },
+        line: { color: '0F172A', width: 0 },
+      });
+      slide.addText(
+        `1순위 강제 법규 · 산업안전보건기준에 관한 규칙 (동기화 ${legalRef.syncedAt} · law.go.kr)`,
+        {
+          x: 0.56,
+          y: curY,
+          w: leftW - 0.22,
+          h: 0.32,
+          fontFace: FONT,
+          fontSize: 8.8,
+          bold: true,
+          color: 'FFFFFF',
+          valign: 'middle',
+        }
+      );
+
+      const primaryLaw = legalRef.laws[0];
+      const lawSnippet =
+        primaryLaw.content.length > 360
+          ? `${primaryLaw.content.slice(0, 355)}… [전문: law.go.kr 확인]`
+          : primaryLaw.content;
+      const lawHeader = `${primaryLaw.title}${primaryLaw.latest_amended_date ? ` (최근 개정/신설 ${primaryLaw.latest_amended_date})` : ''}`;
+
+      slide.addText(lawHeader, {
+        x: 0.58,
+        y: curY + 0.38,
+        w: leftW - 0.26,
+        h: 0.24,
+        fontFace: FONT,
+        fontSize: 9.4,
+        bold: true,
+        color: '0F172A',
+      });
+      slide.addText(lawSnippet, {
+        x: 0.58,
+        y: curY + 0.64,
+        w: leftW - 0.26,
+        h: lawBoxH - 0.72,
+        fontFace: FONT,
+        fontSize: 8.2,
+        color: '1E293B',
+        valign: 'top',
+      });
+      curY += lawBoxH + 0.14;
+    }
+
+    if (sec?.guides && legalRef.guides.length > 0) {
+      const guideBoxH = Math.max(1.5, 5.08 - curY);
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: curY,
+        w: leftW,
+        h: guideBoxH,
+        fill: { color: 'FFFFFF' },
+        line: { color: 'CBD5E1', width: 0.8 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: curY,
+        w: leftW,
+        h: 0.3,
+        fill: { color: '334155' },
+        line: { color: '334155', width: 0 },
+      });
+      slide.addText('3순위 자율 권고 · 기술지원규정 (KOSHA GUIDE)', {
+        x: 0.56,
+        y: curY,
+        w: leftW - 0.22,
+        h: 0.3,
+        fontFace: FONT,
+        fontSize: 8.8,
+        bold: true,
+        color: 'FFFFFF',
+        valign: 'middle',
+      });
+
+      const guideLines = legalRef.guides.slice(0, 3).map((g) => {
+        const warn =
+          g.staleness_level === 'critical'
+            ? ` [필수: 최신 규칙 우선 확인]`
+            : g.staleness_level === 'info'
+              ? ` (${g.staleness_note})`
+              : '';
+        return `• [${g.no}] ${g.name} (공표 ${g.published_date || '-'})${warn}`;
+      });
+      slide.addText(guideLines.join('\n'), {
+        x: 0.58,
+        y: curY + 0.36,
+        w: leftW - 0.26,
+        h: guideBoxH - 0.42,
+        fontFace: FONT,
+        fontSize: 8.3,
+        color: '1E293B',
+        valign: 'top',
+      });
+    }
+
+    // Right column: Local PNG Data URL QR Codes (0% CORS taint)
+    if (showMedia) {
+      const qrItems = legalRef.qrMedia.slice(0, 3);
+      const qrX = 6.35;
+      const qrW = 3.2;
+
+      slide.addShape(pptx.ShapeType.rect, {
+        x: qrX,
+        y: 1.22,
+        w: qrW,
+        h: 3.86,
+        fill: { color: 'F8FAFC' },
+        line: { color: 'CBD5E1', width: 0.8 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: qrX,
+        y: 1.22,
+        w: qrW,
+        h: 0.32,
+        fill: { color: primaryAccentPptx },
+        line: { color: primaryAccentPptx, width: 0 },
+      });
+      slide.addText('공단 공식 교육미디어 QR (모바일 스캔)', {
+        x: qrX + 0.1,
+        y: 1.22,
+        w: qrW - 0.2,
+        h: 0.32,
+        fontFace: FONT,
+        fontSize: 8.8,
+        bold: true,
+        color: 'FFFFFF',
+        valign: 'middle',
+      });
+
+      const qrDataList = await Promise.all(
+        qrItems.map((m) => generateLocalQrDataUrl(m.url))
+      );
+
+      qrItems.forEach((m, idx) => {
+        const rowY = 1.66 + idx * 1.12;
+        const qrData = qrDataList[idx];
+
+        slide.addShape(pptx.ShapeType.rect, {
+          x: qrX + 0.12,
+          y: rowY,
+          w: qrW - 0.24,
+          h: 1.0,
+          fill: { color: 'FFFFFF' },
+          line: { color: 'E2E8F0', width: 0.6 },
+        });
+
+        if (qrData) {
+          slide.addImage({
+            data: qrData,
+            x: qrX + 0.2,
+            y: rowY + 0.1,
+            w: 0.8,
+            h: 0.8,
+          });
+        }
+
+        slide.addText(`[공단 ${m.media_style}]`, {
+          x: qrX + 1.08,
+          y: rowY + 0.1,
+          w: qrW - 1.26,
+          h: 0.22,
+          fontFace: FONT,
+          fontSize: 8.2,
+          bold: true,
+          color: primaryAccentPptx,
+        });
+        slide.addText(m.title, {
+          x: qrX + 1.08,
+          y: rowY + 0.32,
+          w: qrW - 1.26,
+          h: 0.58,
+          fontFace: FONT,
+          fontSize: 8.2,
+          bold: true,
+          color: '0F172A',
+          valign: 'top',
+        });
       });
     }
   }

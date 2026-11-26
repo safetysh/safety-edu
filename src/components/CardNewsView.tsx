@@ -1,6 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { Archive, Copy, Download, Loader2, AlertTriangle, CloudAlert, Lock, FileText } from 'lucide-react';
-import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
+import {
+  CustomSiteInfo,
+  GeneratedMaterial,
+  ResolvedLegalReference,
+} from '../types/safety';
 import { HazardPictogram } from './SafetyVisuals';
 import {
   getCaseTranslations,
@@ -24,6 +28,7 @@ import {
 interface CardNewsViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
+  legalRef?: ResolvedLegalReference | null;
   onNotify: (type: 'success' | 'error', message: string) => void;
 }
 
@@ -37,6 +42,7 @@ const CARD_SLUGS = [
 export const CardNewsView: React.FC<CardNewsViewProps> = ({
   material,
   siteInfo,
+  legalRef = null,
   onNotify,
 }) => {
   const cardRefs = useRef<Array<HTMLDivElement | null>>([null, null, null, null]);
@@ -512,6 +518,12 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
                   }}
                 >
                   {seasonTrans}
+                </div>
+              )}
+
+              {siteInfo.showPage1LegalSummary && (
+                <div className="rounded border border-slate-300 bg-slate-100 px-2.5 py-1 text-[9.5px] font-bold text-slate-900 truncate">
+                  [필수 법령] {legalRef?.primaryLawShort || c.legal_ref}
                 </div>
               )}
 

@@ -108,6 +108,14 @@
     overflow: hidden !important;
   }
 
+  /* When 2-page reference appendix is enabled, allow clean 2-page A4 flow */
+  html.print-two-page-mode,
+  html.print-two-page-mode body,
+  .print-only-root.print-two-page {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   .ops-print-page {
     width: 210mm !important;
     height: 297mm !important;
@@ -117,6 +125,18 @@
     border: none !important;
     border-radius: 0 !important;
     transform: none !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  .print-only-root.print-two-page .ops-print-page:not(.ops-appendix-page) {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .print-only-root.print-two-page .ops-appendix-page {
+    page-break-before: always !important;
+    break-before: page !important;
     page-break-after: avoid !important;
     break-after: avoid !important;
   }

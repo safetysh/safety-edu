@@ -19,6 +19,13 @@ interface PersistedSitePrefs {
   logoFileName?: string;
   showTbmSignTable?: boolean;
   inkSaverMode?: boolean;
+  showPage1LegalSummary?: boolean;
+  showPage2Appendix?: boolean;
+  appendixSections?: {
+    laws?: boolean;
+    guides?: boolean;
+    mediaQr?: boolean;
+  };
 }
 
 export function loadPersistedSitePrefs(todayDate: string): CustomSiteInfo {
@@ -33,6 +40,13 @@ export function loadPersistedSitePrefs(todayDate: string): CustomSiteInfo {
     logoFileName: '',
     showTbmSignTable: false,
     inkSaverMode: false,
+    showPage1LegalSummary: true,
+    showPage2Appendix: false,
+    appendixSections: {
+      laws: true,
+      guides: true,
+      mediaQr: true,
+    },
   };
 
   if (typeof window === 'undefined') return defaults;
@@ -60,6 +74,25 @@ export function loadPersistedSitePrefs(todayDate: string): CustomSiteInfo {
         typeof parsed.logoFileName === 'string' ? parsed.logoFileName : defaults.logoFileName,
       showTbmSignTable: Boolean(parsed.showTbmSignTable),
       inkSaverMode: Boolean(parsed.inkSaverMode),
+      showPage1LegalSummary:
+        typeof parsed.showPage1LegalSummary === 'boolean'
+          ? parsed.showPage1LegalSummary
+          : defaults.showPage1LegalSummary,
+      showPage2Appendix: Boolean(parsed.showPage2Appendix),
+      appendixSections: {
+        laws:
+          typeof parsed.appendixSections?.laws === 'boolean'
+            ? parsed.appendixSections.laws
+            : true,
+        guides:
+          typeof parsed.appendixSections?.guides === 'boolean'
+            ? parsed.appendixSections.guides
+            : true,
+        mediaQr:
+          typeof parsed.appendixSections?.mediaQr === 'boolean'
+            ? parsed.appendixSections.mediaQr
+            : true,
+      },
     };
   } catch {
     return defaults;
@@ -79,6 +112,9 @@ export function savePersistedSitePrefs(siteInfo: CustomSiteInfo): void {
       logoFileName: siteInfo.logoFileName,
       showTbmSignTable: siteInfo.showTbmSignTable,
       inkSaverMode: siteInfo.inkSaverMode,
+      showPage1LegalSummary: siteInfo.showPage1LegalSummary,
+      showPage2Appendix: siteInfo.showPage2Appendix,
+      appendixSections: siteInfo.appendixSections,
     };
     window.localStorage.setItem(SITE_PREFS_STORAGE_KEY, JSON.stringify(payload));
   } catch {

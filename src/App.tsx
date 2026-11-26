@@ -10,6 +10,7 @@ import {
   Loader2,
   X,
   RotateCcw,
+  BookOpen,
 } from 'lucide-react';
 import { SEED_ACCIDENT_CASES } from './data/seedCases';
 import {
@@ -21,6 +22,7 @@ import {
   IndustryType,
   MetaSummaryData,
   OutputFormat,
+  RefsLegalData,
   SourceFilterTab,
   TimelineStep,
   VariationOption,
@@ -39,6 +41,10 @@ import {
   loadMetaSummary,
 } from './services/dbLoader';
 import {
+  loadRefsLegalDb,
+  resolveLegalReferenceForCase,
+} from './services/legalLoader';
+import {
   loadMeasurePresets,
   loadPersistedSitePrefs,
   saveMeasurePresets,
@@ -46,6 +52,8 @@ import {
 } from './utils/localPrefs';
 import { ControlSidebar } from './components/ControlSidebar';
 import { OpsSheetView } from './components/OpsSheetView';
+import { OpsReferenceSheetView } from './components/OpsReferenceSheetView';
+import { LegalReferenceDrawer } from './components/LegalReferenceDrawer';
 import { SlideDeckView } from './components/SlideDeckView';
 import { CardNewsView } from './components/CardNewsView';
 import {
@@ -87,6 +95,8 @@ export default function App() {
   const [casesDb, setCasesDb] = useState<AccidentCase[]>(() => getCachedCasesSnapshot([]));
   const [customCases, setCustomCases] = useState<AccidentCase[]>([]);
   const [metaSummary, setMetaSummary] = useState<MetaSummaryData | null>(null);
+  const [legalDb, setLegalDb] = useState<RefsLegalData | null>(null);
+  const [legalDrawerOpen, setLegalDrawerOpen] = useState<boolean>(false);
   const [isShardLoading, setIsShardLoading] = useState<boolean>(false);
 
   const [industry, setIndustry] = useState<IndustryType>('건설현장');
@@ -136,6 +146,14 @@ export default function App() {
     savePersistedSitePrefs(siteInfo);
   }, [siteInfo]);
 
+  // Keep @media print 2-page mode synchronized on root <html> element
+  useEffect(() => {
+    document.documentElement.classList.toggle('print-two-page-mode', siteInfo.showPage2Appendix);
+    return () => {
+      document.documentElement.classList.remove('print-two-page-mode');
+    };
+  }, [siteInfo.showPage2Appendix]);
+
   useEffect(() => {
     saveMeasurePresets(measurePresets);
   }, [measurePresets]);
@@ -171,11 +189,14 @@ export default function App() {
     isPrimaryStandardModel: isStandardModelCase(material.primaryCase),
   };
 
-  // Preload meta_summary.json once on mount
+  // Preload meta_summary.json & refs_legal.json once on mount (static JSON, zero external API)
   useEffect(() => {
     const controller = new AbortController();
     loadMetaSummary(controller.signal).then((meta) => {
       if (meta) setMetaSummary(meta);
+    });
+    loadRefsLegalDb(controller.signal).then((refs) => {
+      if (refs) setLegalDb(refs);
     });
     return () => controller.abort();
   }, []);
@@ -357,6 +378,12 @@ export default function App() {
 
   const deferredPrintMaterial = useDeferredValue(effectiveMaterial);
 
+  const resolvedLegalRef = useMemo(
+    () => resolveLegalReferenceForCase(legalDb, effectiveMaterial.primaryCase, workType),
+    [legalDb, effectiveMaterial.primaryCase, workType]
+  );
+  const deferredPrintLegalRef = useDeferredValue(resolvedLegalRef);
+
   const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     if (toastTimerRef.current) {
@@ -526,8 +553,7 @@ export default function App() {
   };
 
   const handleUpdateSiteInfo = (patch: Partial<CustomSiteInfo>) => {
-    const nextSite = { ...siteInfo, ...patch };
-    setSiteInfo(nextSite);
+    setSiteInfo((prev) => ({ ...prev, ...patch }));
     if (typeof patch.includeCrossProcess === 'boolean') {
       runGeneration({
         includeCrossProcess: patch.includeCrossProcess,
@@ -768,8 +794,9 @@ export default function App() {
     setIsExportingPptx(true);
     try {
       const { downloadSafetyPptx } = await import('./utils/exportPptx');
-      const fileName = await downloadSafetyPptx(effectiveMaterial, siteInfo);
-      showToast('success', `5장 슬라이드 PPTX 파일이 저장되었습니다: ${fileName}`);
+      const fileName = await downloadSafetyPptx(effectiveMaterial, siteInfo, resolvedLegalRef);
+      const slideCount = siteInfo.showPage2Appendix && resolvedLegalRef ? 6 : 5;
+      showToast('success', `${slideCount}장 슬라이드 PPTX 파일이 저장되었습니다: ${fileName}`);
     } catch {
       showToast('error', 'PPTX 파일 생성 중 오류가 발생했습니다. 다시 시도해 주세요.');
     } finally {
@@ -1046,7 +1073,16 @@ export default function App() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 text-[11.8px]">
+            <div className="flex items-center gap-2.5 text-[11.8px]">
+              <button
+                type="button"
+                data-export-hide="true"
+                onClick={() => setLegalDrawerOpen(true)}
+                className="no-print inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-[11.2px] font-bold transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                <span>법령·지침·영상 참고</span>
+              </button>
               <span className="text-slate-500">
                 사례코드: <strong className="text-slate-800">{effectiveMaterial.primaryCase.id}</strong> ({effectiveMaterial.primaryCase.hazard_type})
               </span>
@@ -1085,10 +1121,11 @@ export default function App() {
           {/* Document Viewport */}
           <div className="flex-1 overflow-auto p-5 lg:p-7 flex flex-col items-center">
             {outputFormat === 'ops' ? (
-              <div className="w-full flex justify-center overflow-x-auto pb-4">
+              <div className="w-full flex flex-col items-center gap-6 overflow-x-auto pb-6">
                 <OpsSheetView
                   material={effectiveMaterial}
                   siteInfo={siteInfo}
+                  legalRef={resolvedLegalRef}
                   showKytAnswers={showKytAnswers}
                   onToggleKytAnswers={handleToggleKytAnswers}
                   onUpdateMeasures={handleUpdateMeasures}
@@ -1097,6 +1134,14 @@ export default function App() {
                   onResetTbm={handleResetTbm}
                   sheetRef={opsSheetRef}
                 />
+                {siteInfo.showPage2Appendix && resolvedLegalRef && (
+                  <OpsReferenceSheetView
+                    material={effectiveMaterial}
+                    siteInfo={siteInfo}
+                    legalRef={resolvedLegalRef}
+                    onNotify={showToast}
+                  />
+                )}
               </div>
             ) : outputFormat === 'slides' ? (
               <SlideDeckView
@@ -1116,6 +1161,7 @@ export default function App() {
               <CardNewsView
                 material={effectiveMaterial}
                 siteInfo={siteInfo}
+                legalRef={resolvedLegalRef}
                 onNotify={showToast}
               />
             )}
@@ -1123,15 +1169,36 @@ export default function App() {
         </main>
       </div>
 
-      {/* Dedicated Single-Page A4 Print Container (deferred so screen paint stays instant) */}
-      <div className="hidden print-only-root">
+      {/* Dedicated A4 Print Container (1-page or 2-page with Reference Appendix) */}
+      <div
+        className={`hidden print-only-root ${
+          siteInfo.showPage2Appendix && deferredPrintLegalRef ? 'print-two-page' : ''
+        }`}
+      >
         <OpsSheetView
           material={deferredPrintMaterial}
           siteInfo={siteInfo}
+          legalRef={deferredPrintLegalRef}
           showKytAnswers={showKytAnswers}
           isPrintClone
         />
+        {siteInfo.showPage2Appendix && deferredPrintLegalRef && (
+          <OpsReferenceSheetView
+            material={deferredPrintMaterial}
+            siteInfo={siteInfo}
+            legalRef={deferredPrintLegalRef}
+            isPrintClone
+          />
+        )}
       </div>
+
+      {/* Web-only Legal / KOSHA GUIDE / Media Reference Drawer */}
+      <LegalReferenceDrawer
+        open={legalDrawerOpen}
+        onClose={() => setLegalDrawerOpen(false)}
+        legalRef={resolvedLegalRef}
+        primaryCase={effectiveMaterial.primaryCase}
+      />
     </div>
   );
 }
