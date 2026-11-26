@@ -97,6 +97,7 @@ export interface AccidentCase {
   source_image_url?: string | null;
   disclaimer?: string;
   source?: 'builtin' | 'custom';
+  is_standard_model?: boolean;
 }
 
 export interface CaseEditableOverride {

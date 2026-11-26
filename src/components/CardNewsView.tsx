@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Archive, Copy, Download, Loader2, AlertTriangle, CloudAlert, Lock } from 'lucide-react';
+import { Archive, Copy, Download, Loader2, AlertTriangle, CloudAlert, Lock, FileText } from 'lucide-react';
 import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
 import { HazardPictogram } from './SafetyVisuals';
 import {
@@ -18,6 +18,7 @@ import {
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
   getSourceBrandStyle,
+  isOfficialKoshaApiCase,
 } from '../utils/textFit';
 
 interface CardNewsViewProps {
@@ -63,10 +64,15 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
     : '현장: ________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
 
+  const isOfficialKosha = isOfficialKoshaApiCase(c);
   const overviewFit = fitFactualOverviewForA4(getCaseOverviewVerbatim(c), 1, false, 200);
   const measuresSourceTag = material.isCustomEdited
-    ? '공단 권고안 기반 · 현장 맞춤 반영'
-    : '공단 원문 기준';
+    ? isOfficialKosha
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : '표준 가이드 기반 · 현장 맞춤 반영'
+    : isOfficialKosha
+      ? '공단 원문 기준'
+      : '표준 가이드';
 
   const handleDownloadSingle = async (idx: number) => {
     const node = cardRefs.current[idx];
@@ -326,9 +332,22 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
             <div>
               <div className="bg-slate-900 text-white px-5 py-3 flex items-center justify-between">
                 <span className="text-[13.5px] font-extrabold">01. 재해개요 및 발생원인</span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-sm bg-white/15">
-                  <Lock className="w-3 h-3" />
-                  <span>공단 원문</span>
+                <span
+                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-sm ${
+                    isOfficialKosha ? 'bg-white/15 text-white' : 'bg-slate-700 text-slate-100'
+                  }`}
+                >
+                  {isOfficialKosha ? (
+                    <>
+                      <Lock className="w-3 h-3" />
+                      <span>공단 공식 원문</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-3 h-3" />
+                      <span>표준 교육모델</span>
+                    </>
+                  )}
                 </span>
               </div>
               <div className="h-1 w-full" style={{ backgroundColor: accentHex }} />

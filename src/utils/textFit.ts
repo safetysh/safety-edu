@@ -188,7 +188,72 @@ export function getCaseOverviewVerbatim(c: AccidentCase): string {
   return c.summary_3lines.filter(Boolean).join(' ').trim();
 }
 
+const STANDARD_MODEL_ID_RE = /^(?:CON|MFG|SVC)-\d{3}$/;
+
+export const STANDARD_MODEL_SOURCE_REF =
+  '산업안전 표준 교육모델 (공단 대표사례 기반 재구성)';
+
+const STANDARD_MODEL_BRAND_STYLE: SourceBrandStyle = {
+  sourceType: 'CASE',
+  shortLabel: '표준 교육모델',
+  badgePrefix: '표준 교육모델',
+  primaryHex: '#475569',
+  darkHex: '#334155',
+  softBgHex: '#F8FAFC',
+  borderHex: '#CBD5E1',
+  textHex: '#334155',
+  pptxHex: '475569',
+  pptxSoftBg: 'F8FAFC',
+  defaultSourceRef: STANDARD_MODEL_SOURCE_REF,
+};
+
+/**
+ * Returns true when a case is one of the built-in offline fallback templates
+ * (`CON-001`, `MFG-001`, `SVC-001`, etc.) rather than a KOSHA API-collected record.
+ */
+export function isStandardModelCase(c: AccidentCase): boolean {
+  return Boolean(c.is_standard_model) || STANDARD_MODEL_ID_RE.test(c.id);
+}
+
+/**
+ * Returns true strictly for real KOSHA Open API collected cases (`SIF` | `FATALITY` | `CASE`),
+ * excluding built-in offline standard templates and user-uploaded custom cases.
+ */
+export function isOfficialKoshaApiCase(c: AccidentCase): boolean {
+  if (c.source === 'custom' || isStandardModelCase(c)) return false;
+  return c.source_type === 'SIF' || c.source_type === 'FATALITY' || c.source_type === 'CASE';
+}
+
+export function getDisplaySourceRef(c: AccidentCase): string {
+  if (isStandardModelCase(c)) {
+    return STANDARD_MODEL_SOURCE_REF;
+  }
+  return c.source_ref || getSourceBrandStyle(c).defaultSourceRef;
+}
+
+export function getCrossProcessSourceBadge(c: AccidentCase): {
+  label: string;
+  isStandard: boolean;
+} {
+  if (isStandardModelCase(c)) {
+    return { label: '표준 모델', isStandard: true };
+  }
+  if (c.source === 'custom') {
+    return { label: '현장 등록', isStandard: false };
+  }
+  if (c.source_type === 'FATALITY') {
+    return { label: '공단 사망속보', isStandard: false };
+  }
+  if (c.source_type === 'SIF') {
+    return { label: '공단 SIF', isStandard: false };
+  }
+  return { label: '공단 사례', isStandard: false };
+}
+
 export function getSourceBrandStyle(c: AccidentCase): SourceBrandStyle {
+  if (isStandardModelCase(c)) {
+    return STANDARD_MODEL_BRAND_STYLE;
+  }
   const st: SourceType = c.source_type || 'CASE';
   return SOURCE_BRAND_STYLES[st] || SOURCE_BRAND_STYLES.CASE;
 }
@@ -199,6 +264,9 @@ export function formatOccurredDateLabel(occurredDate?: string): string {
 }
 
 export function formatSourceHeaderBadge(c: AccidentCase): string {
+  if (isStandardModelCase(c)) {
+    return '표준 교육모델';
+  }
   const st: SourceType = c.source_type || 'CASE';
   const dateDot = formatOccurredDateLabel(c.occurred_date);
   if (st === 'FATALITY') {

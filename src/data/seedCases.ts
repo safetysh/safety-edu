@@ -1,6 +1,6 @@
 import { AccidentCase } from '../types/safety';
 
-export const SEED_ACCIDENT_CASES: AccidentCase[] = [
+const RAW_SEED_ACCIDENT_CASES: AccidentCase[] = [
   {
     id: 'CON-001',
     industry: '건설현장',
@@ -852,3 +852,8 @@ export const SEED_ACCIDENT_CASES: AccidentCase[] = [
     source: 'builtin',
   },
 ];
+
+export const SEED_ACCIDENT_CASES: AccidentCase[] = RAW_SEED_ACCIDENT_CASES.map((c) => ({
+  ...c,
+  is_standard_model: true,
+}));

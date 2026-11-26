@@ -10,6 +10,7 @@ import {
   CloudAlert,
   Globe,
   Lock,
+  FileText,
   RotateCcw,
   Plus,
   X,
@@ -27,7 +28,10 @@ import {
   formatCrossProcessSummaryVerbatim,
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
+  getCrossProcessSourceBadge,
+  getDisplaySourceRef,
   getSourceBrandStyle,
+  isOfficialKoshaApiCase,
   splitSifBracketHighlights,
 } from '../utils/textFit';
 
@@ -86,13 +90,18 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
       ? sourceBrand.primaryHex
       : theme.primaryHex;
 
+  const isOfficialKosha = isOfficialKoshaApiCase(c);
   const isMeasuresEdited = Boolean(material.isMeasuresEdited);
   const isTbmEdited = Boolean(material.isTbmEdited);
   const measuresSourceLabel = isMeasuresEdited
-    ? '공단 권고안 기반 · 현장 맞춤 반영'
-    : isSif
-      ? '공단 원문 (SIF 위험성감소대책)'
-      : '공단 원문 가이드';
+    ? isOfficialKosha
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : '표준 가이드 기반 · 현장 맞춤 반영'
+    : !isOfficialKosha
+      ? '표준 가이드'
+      : isSif
+        ? '공단 원문 (SIF 위험성감소대책)'
+        : '공단 원문 가이드';
 
   const siteLabel = siteInfo.siteName.trim() || '________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
@@ -149,7 +158,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
           />
         )}
         <span className="keep-all">
-          현장: {siteLabel} · 출처: {c.source_ref || sourceBrand.defaultSourceRef} · {dateLabel}
+          현장: {siteLabel} · 출처: {getDisplaySourceRef(c)} · 코드 {c.id} · {dateLabel}
         </span>
       </div>
       <span className="font-bold text-slate-800 shrink-0">{pageNum} / 5</span>
@@ -294,7 +303,11 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
       const overviewFit = fitFactualOverviewForA4(getCaseOverviewVerbatim(c), 0, false, 310);
       return (
         <div className="w-full h-full bg-white flex flex-col justify-between overflow-hidden">
-          {renderSlideHeader('01. 중대재해 사고 개요 [공단 공식 원문] 및 발생 메커니즘')}
+          {renderSlideHeader(
+            isOfficialKosha
+              ? '01. 중대재해 사고 개요 [공단 공식 원문] 및 발생 메커니즘'
+              : '01. 중대재해 사고 개요 [표준 교육모델] 및 발생 메커니즘'
+          )}
           <div className="flex-1 px-6 py-4 flex flex-col justify-between gap-3.5 overflow-hidden">
             <div
               className="rounded-md border p-4 space-y-2"
@@ -306,10 +319,17 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
               <div className="flex items-center justify-between gap-2">
                 <span
                   className="inline-flex items-center gap-1 text-[11.5px] font-extrabold"
-                  style={{ color: accentHex }}
+                  style={{ color: isOfficialKosha ? accentHex : '#334155' }}
                 >
-                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                  <span>사고 개요 공단 공식 원문 · 기인물: {c.equipment}</span>
+                  {isOfficialKosha ? (
+                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {isOfficialKosha ? '사고 개요 공단 공식 원문' : '사고 개요 표준 교육모델'} ·
+                    기인물: {c.equipment}
+                  </span>
                 </span>
                 {overviewFit.isExcerpted && (
                   <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-bold">
@@ -474,8 +494,17 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                     className="px-4 py-2.5 text-white text-[12.5px] font-bold flex items-center gap-1.5"
                     style={{ backgroundColor: accentHex }}
                   >
-                    <Lock className="w-3.5 h-3.5 shrink-0" />
-                    <span>핵심 위험요인 (원문 고정)</span>
+                    {isOfficialKosha ? (
+                      <>
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <span>핵심 위험요인 (원문 고정)</span>
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="w-3.5 h-3.5 shrink-0" />
+                        <span>핵심 위험요인 (표준 교육모델)</span>
+                      </>
+                    )}
                   </div>
                   <div className="flex-1 p-3.5 space-y-2.5 bg-white">
                     {c.direct_causes.map((cause, idx) => (
@@ -577,7 +606,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                         className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 font-bold text-orange-800 cursor-pointer"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>↺ 공단 원문 복원</span>
+                        <span>{isOfficialKosha ? '↺ 공단 원문 복원' : '↺ 표준 가이드 복원'}</span>
                       </button>
                     )}
                   </div>
@@ -667,30 +696,38 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
               </div>
             </div>
 
-            {relatedCase && relatedSummary && (
-              <div className="col-span-4 rounded-md border border-amber-400 bg-amber-50/70 overflow-hidden flex flex-col justify-between keep-all">
-                <div>
-                  <div className="bg-amber-700 text-white px-3.5 py-2 flex items-center gap-1.5 text-[11.2px] font-bold">
-                    <Repeat className="w-3.5 h-3.5 shrink-0" />
-                    <span>타 업종 유사 공정 주의 사례</span>
-                  </div>
-                  <div className="p-3 space-y-1.5">
-                    <div className="text-[10px] font-bold text-amber-900">
-                      {relatedCase.industry} · {relatedCase.hazard_type} · {relatedCase.work_type}
+            {relatedCase && relatedSummary && (() => {
+              const crossBadge = getCrossProcessSourceBadge(relatedCase);
+              return (
+                <div className="col-span-4 rounded-md border border-amber-400 bg-amber-50/70 overflow-hidden flex flex-col justify-between keep-all">
+                  <div>
+                    <div className="bg-amber-700 text-white px-3.5 py-2 flex items-center justify-between gap-1.5 text-[11.2px] font-bold">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Repeat className="w-3.5 h-3.5 shrink-0" />
+                        <span>타 업종 유사 공정 주의 사례</span>
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded-sm bg-white/20 text-[9px] font-bold shrink-0">
+                        {crossBadge.label}
+                      </span>
                     </div>
-                    <h3 className="text-[12px] font-bold text-slate-900 leading-snug">
-                      {relatedCase.title}
-                    </h3>
-                    <p className="text-[10.4px] text-slate-800 leading-snug">
-                      {relatedSummary.text}
-                    </p>
+                    <div className="p-3 space-y-1.5">
+                      <div className="text-[10px] font-bold text-amber-900">
+                        {relatedCase.industry} · {relatedCase.hazard_type} · {relatedCase.work_type}
+                      </div>
+                      <h3 className="text-[12px] font-bold text-slate-900 leading-snug">
+                        {relatedCase.title}
+                      </h3>
+                      <p className="text-[10.4px] text-slate-800 leading-snug">
+                        {relatedSummary.text}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="m-3 mt-0 rounded border border-amber-300 bg-white p-2.5 text-[10.2px] font-bold text-amber-950 leading-snug">
+                    핵심 교훈: {relatedCase.preventive_measures[0]}
                   </div>
                 </div>
-                <div className="m-3 mt-0 rounded border border-amber-300 bg-white p-2.5 text-[10.2px] font-bold text-amber-950 leading-snug">
-                  핵심 교훈: {relatedCase.preventive_measures[0]}
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
           {renderSlideFooter(4)}
         </div>
@@ -705,7 +742,15 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
           <div className="col-span-7 rounded-md border border-slate-200 overflow-hidden flex flex-col">
             <div className="bg-slate-900 text-white px-4 py-2 flex items-center justify-between text-[11.5px] font-bold">
               <span>
-                작업 전 5분 TBM 점검표 ({isTbmEdited ? '현장 맞춤 반영' : '공단 원문 가이드'})
+                작업 전 5분 TBM 점검표 (
+                {isTbmEdited
+                  ? isOfficialKosha
+                    ? '공단 권고안 기반 · 현장 맞춤 반영'
+                    : '표준 가이드 기반 · 현장 맞춤 반영'
+                  : isOfficialKosha
+                    ? '공단 원문 가이드'
+                    : '표준 가이드'}
+                )
               </span>
               <div data-export-hide="true" className="no-print flex items-center gap-1.5">
                 {c.tbm_checklist.length < 7 && (

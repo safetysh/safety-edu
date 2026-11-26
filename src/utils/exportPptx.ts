@@ -11,7 +11,9 @@ import {
   formatCrossProcessSummaryVerbatim,
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
+  getDisplaySourceRef,
   getSourceBrandStyle,
+  isOfficialKoshaApiCase,
 } from './textFit';
 
 const FONT = 'Malgun Gothic';
@@ -39,11 +41,14 @@ export async function downloadSafetyPptx(
   pptx.subject = `${material.selectedIndustry} · ${material.primaryCase.hazard_type} 재해예방`;
 
   const { primaryCase: c, relatedCase, theme, isExactMatch } = material;
+  const isOfficialKosha = isOfficialKoshaApiCase(c);
   const sourceBrand = getSourceBrandStyle(c);
   const sourceBadgeText = formatSourceHeaderBadge(c);
-  const primaryAccentPptx = c.source_type === 'FATALITY' || c.source_type === 'SIF'
+  const primaryAccentPptx = !isOfficialKosha
     ? sourceBrand.pptxHex
-    : theme.pptxPrimary;
+    : c.source_type === 'FATALITY' || c.source_type === 'SIF'
+      ? sourceBrand.pptxHex
+      : theme.pptxPrimary;
 
   const siteLabel = siteInfo.siteName.trim() || '________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
@@ -57,10 +62,14 @@ export async function downloadSafetyPptx(
   const isMeasuresEdited = Boolean(material.isMeasuresEdited || material.isCustomEdited);
   const isTbmEdited = Boolean(material.isTbmEdited);
   const measuresAttributionLabel = isMeasuresEdited
-    ? '공단 권고안 기반 · 현장 맞춤 반영'
-    : c.source_type === 'SIF'
-      ? '공단 원문 (SIF 위험성감소대책)'
-      : '공단 표준 예방가이드 원문';
+    ? isOfficialKosha
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : '표준 가이드 기반 · 현장 맞춤 반영'
+    : !isOfficialKosha
+      ? '표준 가이드'
+      : c.source_type === 'SIF'
+        ? '공단 원문 (SIF 위험성감소대책)'
+        : '공단 표준 예방가이드 원문';
 
   const addLogoIfPresent = (slide: PptxGenJS.Slide, x: number, y: number, w = 1.05, h = 0.28) => {
     if (!siteInfo.logoDataUrl) return;
@@ -144,16 +153,16 @@ export async function downloadSafetyPptx(
     const textStartX = siteInfo.logoDataUrl ? 1.62 : 0.45;
     addLogoIfPresent(slide, 0.45, 5.23, 1.05, 0.3);
 
-    const sourceRefLabel = c.source_ref || sourceBrand.defaultSourceRef;
+    const sourceRefLabel = getDisplaySourceRef(c);
     slide.addText(
-      `현장: ${siteLabel}  |  출처: ${sourceRefLabel}  |  ${dateLabel}`,
+      `현장: ${siteLabel}  |  출처: ${sourceRefLabel} · 코드 ${c.id}  |  ${dateLabel}`,
       {
         x: textStartX,
         y: 5.24,
         w: 8.4 - textStartX,
         h: 0.28,
         fontFace: FONT,
-        fontSize: 8.6,
+        fontSize: 8.4,
         color: '64748B',
         valign: 'middle',
       }
@@ -410,7 +419,13 @@ export async function downloadSafetyPptx(
   // =========================================================================
   {
     const slide = pptx.addSlide();
-    addSlideChrome(slide, 2, '01. 중대재해 사고 개요 [공단 공식 원문] 및 발생 메커니즘');
+    addSlideChrome(
+      slide,
+      2,
+      isOfficialKosha
+        ? '01. 중대재해 사고 개요 [공단 공식 원문] 및 발생 메커니즘'
+        : '01. 중대재해 사고 개요 [표준 교육모델] 및 발생 메커니즘'
+    );
 
     const rawOverview = getCaseOverviewVerbatim(c);
     const fit = fitFactualOverviewForA4(rawOverview, 0, false, 300);
@@ -425,9 +440,10 @@ export async function downloadSafetyPptx(
       line: { color: primaryAccentPptx, width: 0.9 },
     });
 
+    const factBadgePrefix = isOfficialKosha ? '공단 공식 원문' : '표준 교육모델';
     const overviewHeader = fit.isExcerpted
-      ? `[공단 공식 원문 · 원문 일부 발췌]  기인물: ${c.equipment}`
-      : `[공단 공식 원문]  기인물: ${c.equipment}`;
+      ? `[${factBadgePrefix} · 원문 일부 발췌]  기인물: ${c.equipment}`
+      : `[${factBadgePrefix}]  기인물: ${c.equipment}`;
 
     slide.addText(overviewHeader, {
       x: 0.62,
@@ -1136,7 +1152,13 @@ export async function downloadSafetyPptx(
   // =========================================================================
   {
     const slide = pptx.addSlide();
-    const tbmAttr = isTbmEdited ? '공단 권고안 기반 · 현장 맞춤 반영' : '공단 원문 가이드';
+    const tbmAttr = isTbmEdited
+      ? isOfficialKosha
+        ? '공단 권고안 기반 · 현장 맞춤 반영'
+        : '표준 가이드 기반 · 현장 맞춤 반영'
+      : isOfficialKosha
+        ? '공단 원문 가이드'
+        : '표준 가이드';
     addSlideChrome(slide, 5, `04. 작업 전 5분 TBM 체크리스트 [${tbmAttr}] 및 KYT 퀴즈`);
 
     slide.addShape(pptx.ShapeType.rect, {

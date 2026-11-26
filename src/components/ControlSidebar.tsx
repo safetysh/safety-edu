@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -40,7 +40,32 @@ import {
 } from '../types/safety';
 import { FOREIGN_LANGUAGE_OPTIONS } from '../data/multilingualDict';
 import { SEASONAL_RISKS, SEASONAL_RISK_LIST } from '../data/seasonalRisks';
-import { formatOccurredDateLabel, isOccurredWithinDays } from '../utils/textFit';
+import {
+  formatOccurredDateLabel,
+  isOccurredWithinDays,
+  isStandardModelCase,
+} from '../utils/textFit';
+
+const searchHeadCache = new WeakMap<AccidentCase, string>();
+const searchBodyCache = new WeakMap<AccidentCase, string>();
+
+function getSearchHead(c: AccidentCase): string {
+  let head = searchHeadCache.get(c);
+  if (head === undefined) {
+    head = `${c.title} ${c.equipment}`.toLowerCase();
+    searchHeadCache.set(c, head);
+  }
+  return head;
+}
+
+function getSearchBody(c: AccidentCase): string {
+  let body = searchBodyCache.get(c);
+  if (body === undefined) {
+    body = `${c.hazard_type} ${c.work_type} ${c.region || ''} ${c.overview_raw || ''} ${c.high_risk_work || ''}`.toLowerCase();
+    searchBodyCache.set(c, body);
+  }
+  return body;
+}
 
 interface ControlSidebarProps {
   industry: IndustryType;
@@ -123,6 +148,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<SidebarTabId>('basic');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [searchSourceFilter, setSearchSourceFilter] = useState<'ALL' | SourceType>('ALL');
   const [newPresetInput, setNewPresetInput] = useState('');
   const [presetPage, setPresetPage] = useState(1);
@@ -141,26 +167,48 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   const workTypes = INDUSTRY_WORK_TYPES[industry];
   const activeSeason = SEASONAL_RISKS[siteInfo.seasonRisk];
 
-  const industryCases = useMemo(
-    () => casesPool.filter((c) => c.industry === industry),
-    [casesPool, industry]
-  );
+  const { industryCases, industryApiCases } = useMemo(() => {
+    const allForInd: AccidentCase[] = [];
+    const apiForInd: AccidentCase[] = [];
+    for (let i = 0; i < casesPool.length; i++) {
+      const c = casesPool[i];
+      if (c.industry === industry) {
+        allForInd.push(c);
+        if (!isStandardModelCase(c)) {
+          apiForInd.push(c);
+        }
+      }
+    }
+    return {
+      industryCases: apiForInd.length > 0 ? apiForInd : allForInd,
+      industryApiCases: apiForInd,
+    };
+  }, [casesPool, industry]);
 
   const sourceCounts = useMemo(() => {
     const shardMeta = metaSummary?.industry_source_counts?.[industry];
-    const localFatality = industryCases.filter((c) => c.source_type === 'FATALITY').length;
-    const localSif = industryCases.filter((c) => c.source_type === 'SIF').length;
-    const localAll = industryCases.length;
+    let localFatality = 0;
+    let localSif = 0;
+    for (let i = 0; i < industryApiCases.length; i++) {
+      const st = industryApiCases[i].source_type;
+      if (st === 'FATALITY') localFatality += 1;
+      else if (st === 'SIF') localSif += 1;
+    }
+    const localAll = industryApiCases.length;
 
     return {
       FATALITY: Math.max(localFatality, shardMeta?.FATALITY || 0),
       SIF: Math.max(localSif, shardMeta?.SIF || 0),
       ALL: Math.max(localAll, shardMeta?.total || 0),
     };
-  }, [industryCases, metaSummary, industry]);
+  }, [industryApiCases, metaSummary, industry]);
 
   const hasRecentFatalityNewBadge = useMemo(() => {
-    if (industryCases.some((c) => c.source_type === 'FATALITY' && isOccurredWithinDays(c.occurred_date, 30))) {
+    if (
+      industryApiCases.some(
+        (c) => c.source_type === 'FATALITY' && isOccurredWithinDays(c.occurred_date, 30)
+      )
+    ) {
       return true;
     }
     return Boolean(
@@ -168,41 +216,71 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
         (f) => f.industry === industry && isOccurredWithinDays(f.occurred_date, 30)
       )
     );
-  }, [industryCases, metaSummary, industry]);
+  }, [industryApiCases, metaSummary, industry]);
 
-  const filteredSearchResults = useMemo(() => {
+  // Pre-sort industry cases by occurred_date descending ONCE per [industryCases],
+  // avoiding O(N log N) sorting on every search keystroke or tab switch.
+  const dateSortedIndustryCases = useMemo(() => {
     if (activeTab !== 'search') return [];
-    const q = searchQuery.trim().toLowerCase();
-    const base = industryCases.filter((c) => {
-      if (searchSourceFilter === 'ALL') return true;
-      return (c.source_type || 'CASE') === searchSourceFilter;
-    });
-
-    const matched = !q
-      ? base
-      : base.filter((c) => {
-          const hay = `${c.title} ${c.equipment} ${c.hazard_type} ${c.work_type} ${c.region || ''} ${c.overview_raw || ''} ${c.high_risk_work || ''}`.toLowerCase();
-          return hay.includes(q);
-        });
-
-    const sorted = [...matched].sort((a, b) => {
-      // Exact title/equipment hit first when searching
-      if (q) {
-        const aHit = a.title.toLowerCase().includes(q) || a.equipment.toLowerCase().includes(q) ? 1 : 0;
-        const bHit = b.title.toLowerCase().includes(q) || b.equipment.toLowerCase().includes(q) ? 1 : 0;
-        if (bHit !== aHit) return bHit - aHit;
-      }
-      // Recent fatalities first when viewing ALL or FATALITY
-      const aFat = a.source_type === 'FATALITY' ? 1 : 0;
-      const bFat = b.source_type === 'FATALITY' ? 1 : 0;
-      if (!q && searchSourceFilter === 'ALL' && bFat !== aFat) return bFat - aFat;
+    return [...industryCases].sort((a, b) => {
       const ad = a.occurred_date || '';
       const bd = b.occurred_date || '';
       return bd !== ad ? (bd > ad ? 1 : -1) : 0;
     });
+  }, [activeTab, industryCases]);
 
-    return sorted.slice(0, 45);
-  }, [activeTab, industryCases, searchQuery, searchSourceFilter]);
+  const filteredSearchResults = useMemo(() => {
+    if (activeTab !== 'search') return [];
+    const LIMIT = 45;
+    const q = deferredSearchQuery.trim().toLowerCase();
+
+    if (!q) {
+      if (searchSourceFilter === 'ALL') {
+        const fatalities: AccidentCase[] = [];
+        const others: AccidentCase[] = [];
+        for (let i = 0; i < dateSortedIndustryCases.length; i++) {
+          const c = dateSortedIndustryCases[i];
+          if (c.source_type === 'FATALITY') {
+            fatalities.push(c);
+            if (fatalities.length >= LIMIT) return fatalities;
+          } else if (others.length < LIMIT) {
+            others.push(c);
+          }
+        }
+        return fatalities.length >= LIMIT
+          ? fatalities.slice(0, LIMIT)
+          : [...fatalities, ...others].slice(0, LIMIT);
+      }
+
+      const out: AccidentCase[] = [];
+      for (let i = 0; i < dateSortedIndustryCases.length; i++) {
+        const c = dateSortedIndustryCases[i];
+        if ((c.source_type || 'CASE') === searchSourceFilter) {
+          out.push(c);
+          if (out.length >= LIMIT) break;
+        }
+      }
+      return out;
+    }
+
+    // Single-pass scan over already date-sorted array preserves exact priority (title/equipment hit first, then recency) with ZERO sorting
+    const headHits: AccidentCase[] = [];
+    const bodyHits: AccidentCase[] = [];
+    for (let i = 0; i < dateSortedIndustryCases.length; i++) {
+      const c = dateSortedIndustryCases[i];
+      if (searchSourceFilter !== 'ALL' && (c.source_type || 'CASE') !== searchSourceFilter) {
+        continue;
+      }
+      if (getSearchHead(c).includes(q)) {
+        headHits.push(c);
+        if (headHits.length >= LIMIT) return headHits;
+      } else if (bodyHits.length < LIMIT && getSearchBody(c).includes(q)) {
+        bodyHits.push(c);
+      }
+    }
+
+    return [...headHits, ...bodyHits].slice(0, LIMIT);
+  }, [activeTab, dateSortedIndustryCases, deferredSearchQuery, searchSourceFilter]);
 
   const pinnedCaseObj = useMemo(
     () => (pinnedCaseId ? casesPool.find((c) => c.id === pinnedCaseId) ?? null : null),
@@ -856,10 +934,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 </div>
               ) : (
                 filteredSearchResults.map((item) => {
+                  const isStd = isStandardModelCase(item);
                   const st: SourceType = item.source_type || 'CASE';
                   const brand = SOURCE_BRAND_STYLES[st];
                   const isSelected = item.id === activeCaseId;
-                  const isNew = st === 'FATALITY' && isOccurredWithinDays(item.occurred_date, 30);
+                  const isNew = !isStd && st === 'FATALITY' && isOccurredWithinDays(item.occurred_date, 30);
 
                   return (
                     <button
@@ -876,9 +955,15 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                         <div className="flex items-center gap-1 min-w-0">
                           <span
                             className="px-1.5 py-0.5 rounded-sm text-[9.5px] font-extrabold text-white shrink-0"
-                            style={{ backgroundColor: brand.primaryHex }}
+                            style={{ backgroundColor: isStd ? '#475569' : brand.primaryHex }}
                           >
-                            {st === 'FATALITY' ? '사망속보' : st === 'SIF' ? 'SIF' : '사례'}
+                            {isStd
+                              ? '표준 모델'
+                              : st === 'FATALITY'
+                                ? '사망속보'
+                                : st === 'SIF'
+                                  ? 'SIF'
+                                  : '사례'}
                           </span>
                           {isNew && (
                             <span className="px-1 py-0.5 rounded-sm bg-red-600 text-white text-[9px] font-extrabold shrink-0">

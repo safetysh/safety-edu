@@ -19,6 +19,20 @@ const inflightExts = new Map<IndustryType, Promise<boolean>>();
 let cachedMeta: MetaSummaryData | null = null;
 let inflightMeta: Promise<MetaSummaryData | null> | null = null;
 
+// Reference-stable snapshot cache prevents unnecessary WeakMap/useMemo invalidations
+let shardCacheVersion = 0;
+let lastSnapshotVersion = -1;
+let lastSnapshotCustomRef: AccidentCase[] | null = null;
+let lastSnapshotResult: AccidentCase[] = [];
+
+const NORMALIZED_SEED_CASES: AccidentCase[] = SEED_ACCIDENT_CASES.map((c) => ({
+  ...c,
+  source_type: c.source_type ?? 'CASE',
+  facts_locked: true,
+  is_standard_model: true,
+  source_ref: c.source_ref ?? '한국산업안전보건공단 중대재해 대표 표준사례',
+}));
+
 function getStaticDataCandidateUrls(fileName: string): string[] {
   const candidates: string[] = [
     `${import.meta.env.BASE_URL}data/${fileName}`,
@@ -41,11 +55,11 @@ function getStaticDataCandidateUrls(fileName: string): string[] {
   return candidates;
 }
 
-async function fetchStaticJsonText(
+async function fetchStaticJsonParsed(
   fileName: string,
   signal?: AbortSignal,
   cacheMode: RequestCache = 'default'
-): Promise<string | null> {
+): Promise<unknown | null> {
   const urls = getStaticDataCandidateUrls(fileName);
   for (const url of urls) {
     try {
@@ -54,9 +68,17 @@ async function fetchStaticJsonText(
         signal,
       });
       if (!response.ok) continue;
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('text/html')) continue;
+
+      if (contentType.includes('application/json') || contentType.includes('+json')) {
+        return await response.json();
+      }
+
       const raw = await response.text();
       if (!raw.trim() || raw.trimStart().startsWith('<')) continue;
-      return raw;
+      return JSON.parse(raw);
     } catch (err) {
       if (signal?.aborted) throw err;
     }
@@ -74,11 +96,10 @@ export async function loadMetaSummary(signal?: AbortSignal): Promise<MetaSummary
 
   inflightMeta = (async () => {
     try {
-      const raw = await fetchStaticJsonText('meta_summary.json', signal, 'no-cache');
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as MetaSummaryData;
-      cachedMeta = parsed;
-      return parsed;
+      const parsed = await fetchStaticJsonParsed('meta_summary.json', signal, 'no-cache');
+      if (!parsed || typeof parsed !== 'object') return null;
+      cachedMeta = parsed as MetaSummaryData;
+      return cachedMeta;
     } catch {
       return null;
     } finally {
@@ -104,21 +125,15 @@ export async function loadIndustryShard(
   if (inflight) return inflight;
 
   const promise = (async () => {
-    const seedForIndustry = SEED_ACCIDENT_CASES.filter((c) => c.industry === industry).map((c) => ({
-      ...c,
-      source_type: c.source_type ?? 'CASE',
-      facts_locked: true,
-      source_ref: c.source_ref ?? '한국산업안전보건공단 중대재해 대표 표준사례',
-    }));
+    const seedForIndustry = NORMALIZED_SEED_CASES.filter((c) => c.industry === industry);
 
     try {
       const shardFile = INDUSTRY_SHARD_FILENAME[industry];
-      const rawText = await fetchStaticJsonText(shardFile, signal, 'default');
-      if (!rawText) {
+      const parsedJson = await fetchStaticJsonParsed(shardFile, signal, 'default');
+      if (!parsedJson) {
         return seedForIndustry;
       }
 
-      const parsedJson = JSON.parse(rawText);
       const { cases: hydrated } = parseCasesData(parsedJson, 'builtin');
       if (hydrated.length === 0) {
         return seedForIndustry;
@@ -130,6 +145,7 @@ export async function loadIndustryShard(
 
       const merged = Array.from(mergedMap.values());
       shardCache.set(industry, merged);
+      shardCacheVersion += 1;
       return merged;
     } catch {
       return seedForIndustry;
@@ -158,10 +174,9 @@ export async function loadIndustryExtension(
 
   const promise = (async () => {
     try {
-      const rawText = await fetchStaticJsonText(extFile, signal, 'default');
-      if (!rawText) return false;
+      const parsedJson = await fetchStaticJsonParsed(extFile, signal, 'default');
+      if (!parsedJson) return false;
 
-      const parsedJson = JSON.parse(rawText);
       const { cases: hydrated } = parseCasesData(parsedJson, 'builtin');
       if (hydrated.length === 0) return false;
 
@@ -174,6 +189,7 @@ export async function loadIndustryExtension(
 
       shardCache.set(industry, Array.from(mergedMap.values()));
       extLoadedSet.add(industry);
+      shardCacheVersion += 1;
       return true;
     } catch {
       return false;
@@ -187,16 +203,18 @@ export async function loadIndustryExtension(
 }
 
 export function getCachedCasesSnapshot(customCases: AccidentCase[]): AccidentCase[] {
+  if (
+    lastSnapshotVersion === shardCacheVersion &&
+    lastSnapshotCustomRef === customCases
+  ) {
+    return lastSnapshotResult;
+  }
+
   const map = new Map<string, AccidentCase>();
 
-  // Always include all 10 built-in seed cases so cross-industry matching works immediately
-  for (const seed of SEED_ACCIDENT_CASES) {
-    map.set(seed.id, {
-      ...seed,
-      source_type: seed.source_type ?? 'CASE',
-      facts_locked: true,
-      source_ref: seed.source_ref ?? '한국산업안전보건공단 중대재해 대표 표준사례',
-    });
+  // Always include all 10 built-in seed cases so offline fallback & cross-industry matching work immediately
+  for (const seed of NORMALIZED_SEED_CASES) {
+    map.set(seed.id, seed);
   }
 
   for (const ind of ['건설현장', '제조업', '서비스업'] as IndustryType[]) {
@@ -212,7 +230,10 @@ export function getCachedCasesSnapshot(customCases: AccidentCase[]): AccidentCas
     map.set(custom.id, custom);
   }
 
-  return Array.from(map.values());
+  lastSnapshotResult = Array.from(map.values());
+  lastSnapshotVersion = shardCacheVersion;
+  lastSnapshotCustomRef = customCases;
+  return lastSnapshotResult;
 }
 
 export function isIndustryShardCached(industry: IndustryType): boolean {

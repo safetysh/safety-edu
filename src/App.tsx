@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Image as ImageIcon,
@@ -56,7 +56,11 @@ import {
 } from './utils/exportImage';
 import { getForeignLanguageNativeLabel } from './data/multilingualDict';
 import { SEASONAL_RISKS } from './data/seasonalRisks';
-import { formatSourceHeaderBadge, getSourceBrandStyle } from './utils/textFit';
+import {
+  formatSourceHeaderBadge,
+  getSourceBrandStyle,
+  isStandardModelCase,
+} from './utils/textFit';
 
 function getTodayDateString(): string {
   const now = new Date();
@@ -149,6 +153,8 @@ export default function App() {
     includeCrossProcess: siteInfo.includeCrossProcess,
     history,
     isExactMatch: material.isExactMatch,
+    primaryIndustry: material.primaryCase.industry,
+    isPrimaryStandardModel: isStandardModelCase(material.primaryCase),
   });
   liveStateRef.current = {
     casesDb,
@@ -161,6 +167,8 @@ export default function App() {
     includeCrossProcess: siteInfo.includeCrossProcess,
     history,
     isExactMatch: material.isExactMatch,
+    primaryIndustry: material.primaryCase.industry,
+    isPrimaryStandardModel: isStandardModelCase(material.primaryCase),
   };
 
   // Preload meta_summary.json once on mount
@@ -173,56 +181,124 @@ export default function App() {
   }, []);
 
   // Lazy-load the selected industry's fast core shard first, then silently hydrate any background extension
+  // and quietly prefetch remaining industries during browser idle time for 0ms switching.
   useEffect(() => {
     let cancelled = false;
     let idleTimer: number | null = null;
+    let prefetchTimer: number | null = null;
 
     async function ensureIndustryLoaded() {
-      if (!isIndustryShardCached(industry)) {
+      const wasAlreadyCached = isIndustryShardCached(industry);
+      if (!wasAlreadyCached) {
         setIsShardLoading(true);
       }
+
       await loadIndustryShard(industry);
       if (cancelled) return;
 
       const snap = liveStateRef.current;
       const nextCases = getCachedCasesSnapshot(snap.customCases);
-      liveStateRef.current.casesDb = nextCases;
-      setCasesDb(nextCases);
-      setIsShardLoading(false);
+      const dbChanged = nextCases !== snap.casesDb;
 
-      const shouldKeepCurrent =
-        regenSeqRef.current > 0 ||
-        Boolean(snap.pinnedCaseId) ||
-        (snap.isExactMatch && snap.sourceFilter === 'ALL');
-
-      const fresh = generateEducationMaterial({
-        allCases: nextCases,
-        industry: snap.industry,
-        workType: snap.workType,
-        sourceFilter: snap.sourceFilter,
-        pinnedCaseId: snap.pinnedCaseId,
-        variationOption: snap.variationOption,
-        includeCrossProcess: snap.includeCrossProcess,
-        history: snap.history,
-        isRegenerate: false,
-        preservePrimaryCase: shouldKeepCurrent,
-      });
-
-      if (!cancelled) {
-        liveStateRef.current.history = fresh.nextHistory;
-        setMaterial(fresh.material);
-        setHistory(fresh.nextHistory);
+      if (dbChanged) {
+        liveStateRef.current.casesDb = nextCases;
+        setCasesDb(nextCases);
+      }
+      if (!wasAlreadyCached) {
+        setIsShardLoading(false);
       }
 
-      // Silently merge large background archive (e.g. db_con_sif.json) without blocking UI
+      const isSameIndustryAsCurrent = snap.primaryIndustry === snap.industry;
+
+      // On warm industry switches where handleSelectIndustry already ran synchronously with up-to-date casesDb,
+      // skip redundant generation & second render!
+      const needsGeneration =
+        !wasAlreadyCached ||
+        !isSameIndustryAsCurrent ||
+        dbChanged ||
+        snap.isPrimaryStandardModel;
+
+      if (needsGeneration) {
+        const shouldKeepCurrent =
+          Boolean(snap.pinnedCaseId) ||
+          (isSameIndustryAsCurrent &&
+            !snap.isPrimaryStandardModel &&
+            (regenSeqRef.current > 0 || (snap.isExactMatch && snap.sourceFilter === 'ALL')));
+
+        const fresh = generateEducationMaterial({
+          allCases: nextCases,
+          industry: snap.industry,
+          workType: snap.workType,
+          sourceFilter: snap.sourceFilter,
+          pinnedCaseId: snap.pinnedCaseId,
+          variationOption: snap.variationOption,
+          includeCrossProcess: snap.includeCrossProcess,
+          history: snap.history,
+          isRegenerate: false,
+          preservePrimaryCase: shouldKeepCurrent,
+        });
+
+        if (!cancelled) {
+          liveStateRef.current.history = fresh.nextHistory;
+          liveStateRef.current.isExactMatch = fresh.material.isExactMatch;
+          liveStateRef.current.primaryIndustry = fresh.material.primaryCase.industry;
+          liveStateRef.current.isPrimaryStandardModel = isStandardModelCase(fresh.material.primaryCase);
+          setMaterial(fresh.material);
+          setHistory(fresh.nextHistory);
+        }
+      }
+
+      // Silently merge large background archive (e.g. db_con_sif.json) in a low-priority transition
       if (!cancelled && hasPendingIndustryExtension(industry)) {
         idleTimer = window.setTimeout(async () => {
           const mergedNew = await loadIndustryExtension(industry);
           if (cancelled || !mergedNew) return;
           const fullCases = getCachedCasesSnapshot(liveStateRef.current.customCases);
           liveStateRef.current.casesDb = fullCases;
-          setCasesDb(fullCases);
+          startTransition(() => {
+            setCasesDb(fullCases);
+          });
         }, 250);
+      }
+
+      // Quietly prefetch remaining industry shards during browser idle time so switching industries is instant
+      // and Section 03 cross-process cards get real KOSHA API cases without affecting initial load.
+      const otherIndustries = (['건설현장', '제조업', '서비스업'] as IndustryType[]).filter(
+        (ind) => ind !== industry && !isIndustryShardCached(ind)
+      );
+      if (!cancelled && otherIndustries.length > 0) {
+        const runPrefetch = async () => {
+          for (const otherInd of otherIndustries) {
+            if (cancelled) return;
+            if (!isIndustryShardCached(otherInd)) {
+              await loadIndustryShard(otherInd);
+              // Brief yield between shards so main thread stays responsive to user clicks
+              await new Promise((r) => window.setTimeout(r, 60));
+            }
+          }
+          if (cancelled) return;
+          const prefetchedCases = getCachedCasesSnapshot(liveStateRef.current.customCases);
+          if (prefetchedCases !== liveStateRef.current.casesDb) {
+            liveStateRef.current.casesDb = prefetchedCases;
+            startTransition(() => {
+              setCasesDb(prefetchedCases);
+            });
+          }
+        };
+
+        prefetchTimer = window.setTimeout(() => {
+          if (cancelled) return;
+          const win = window as Window & {
+            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+          };
+          if (typeof win.requestIdleCallback === 'function') {
+            win.requestIdleCallback(() => {
+              if (!cancelled) void runPrefetch();
+            }, { timeout: 1500 });
+          } else {
+            void runPrefetch();
+          }
+        }, 700);
       }
     }
 
@@ -231,6 +307,7 @@ export default function App() {
     return () => {
       cancelled = true;
       if (idleTimer !== null) window.clearTimeout(idleTimer);
+      if (prefetchTimer !== null) window.clearTimeout(prefetchTimer);
     };
   }, [industry]);
 
@@ -342,6 +419,8 @@ export default function App() {
         includeCrossProcess: targetCross,
         history: result.nextHistory,
         isExactMatch: result.material.isExactMatch,
+        primaryIndustry: result.material.primaryCase.industry,
+        isPrimaryStandardModel: isStandardModelCase(result.material.primaryCase),
       };
       setMaterial(result.material);
       setHistory(result.nextHistory);
@@ -356,12 +435,23 @@ export default function App() {
     setWorkType(firstWorkType);
     setPinnedCaseId(null);
     setActiveSlide(0);
-    runGeneration({
-      industry: nextIndustry,
-      workType: firstWorkType,
-      pinnedCaseId: null,
-      isRegenerate: false,
-    });
+
+    if (isIndustryShardCached(nextIndustry)) {
+      const latestDb = getCachedCasesSnapshot(liveStateRef.current.customCases);
+      if (latestDb !== liveStateRef.current.casesDb) {
+        liveStateRef.current.casesDb = latestDb;
+        setCasesDb(latestDb);
+      }
+      runGeneration({
+        db: latestDb,
+        industry: nextIndustry,
+        workType: firstWorkType,
+        pinnedCaseId: null,
+        isRegenerate: false,
+      });
+    } else {
+      setIsShardLoading(true);
+    }
   };
 
   const handleSelectWorkType = (nextWorkType: string) => {
@@ -492,6 +582,7 @@ export default function App() {
 
   const handleResetMeasures = useCallback(() => {
     const caseId = material.primaryCase.id;
+    const isStd = isStandardModelCase(material.primaryCase);
     setCaseEditsMap((prev) => {
       const current = prev[caseId];
       if (!current) return prev;
@@ -503,8 +594,11 @@ export default function App() {
       }
       return next;
     });
-    showToast('success', '예방대책을 공단 공식 원문으로 복원했습니다.');
-  }, [material.primaryCase.id, showToast]);
+    showToast(
+      'success',
+      isStd ? '예방대책을 표준 가이드로 복원했습니다.' : '예방대책을 공단 공식 원문으로 복원했습니다.'
+    );
+  }, [material.primaryCase, showToast]);
 
   const handleUpdateTbm = useCallback(
     (nextTbm: string[]) => {
@@ -522,6 +616,7 @@ export default function App() {
 
   const handleResetTbm = useCallback(() => {
     const caseId = material.primaryCase.id;
+    const isStd = isStandardModelCase(material.primaryCase);
     setCaseEditsMap((prev) => {
       const current = prev[caseId];
       if (!current) return prev;
@@ -533,17 +628,26 @@ export default function App() {
       }
       return next;
     });
-    showToast('success', 'TBM 점검표를 공단 원문 가이드로 복원했습니다.');
-  }, [material.primaryCase.id, showToast]);
+    showToast(
+      'success',
+      isStd ? 'TBM 점검표를 표준 가이드로 복원했습니다.' : 'TBM 점검표를 공단 원문 가이드로 복원했습니다.'
+    );
+  }, [material.primaryCase, showToast]);
 
   const handleResetAllEditsForCurrentCase = () => {
     const caseId = material.primaryCase.id;
+    const isStd = isStandardModelCase(material.primaryCase);
     setCaseEditsMap((prev) => {
       const next = { ...prev };
       delete next[caseId];
       return next;
     });
-    showToast('success', '대책 및 점검표를 모두 공단 원문으로 복원했습니다.');
+    showToast(
+      'success',
+      isStd
+        ? '대책 및 점검표를 모두 표준 가이드로 복원했습니다.'
+        : '대책 및 점검표를 모두 공단 원문으로 복원했습니다.'
+    );
   };
 
   const handleAppendPresetMeasure = (presetText: string) => {
@@ -903,7 +1007,9 @@ export default function App() {
                 <>
                   <span className="text-slate-300" aria-hidden="true">·</span>
                   <span className="px-2 py-0.5 rounded bg-amber-100 border border-amber-300 text-amber-950 text-[10.8px] font-extrabold">
-                    공단 권고안 기반 · 현장 맞춤 편집됨
+                    {isStandardModelCase(effectiveMaterial.primaryCase)
+                      ? '표준 가이드 기반 · 현장 맞춤 반영'
+                      : '공단 권고안 기반 · 현장 맞춤 편집됨'}
                   </span>
                   <button
                     type="button"
@@ -911,7 +1017,11 @@ export default function App() {
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-orange-800 hover:underline cursor-pointer"
                   >
                     <RotateCcw className="w-3 h-3" />
-                    <span>공단 원문 전체 복원</span>
+                    <span>
+                      {isStandardModelCase(effectiveMaterial.primaryCase)
+                        ? '표준 가이드 전체 복원'
+                        : '공단 원문 전체 복원'}
+                    </span>
                   </button>
                 </>
               ) : (

@@ -17,6 +17,7 @@ import {
   TimelineStep,
   VariationOption,
 } from '../types/safety';
+import { isStandardModelCase } from '../utils/textFit';
 
 export interface GenerationHistoryState {
   version: number;
@@ -269,6 +270,11 @@ interface CachedPrimaryPools {
 
 interface AllCasesIndex {
   byId: Map<string, AccidentCase>;
+  apiByIndustrySource: Map<string, AccidentCase[]>;
+  apiBySource: Record<SourceFilterTab, AccidentCase[]>;
+  fallbackByIndustry: Record<IndustryType, AccidentCase[]>;
+  otherIndustryApi: Record<IndustryType, AccidentCase[]>;
+  otherIndustryFallback: Record<IndustryType, AccidentCase[]>;
   primaryPools: Map<string, CachedPrimaryPools>;
   crossPools: Map<string, AccidentCase[]>;
 }
@@ -279,11 +285,71 @@ function getOrCreateCasesIndex(allCases: AccidentCase[]): AllCasesIndex {
   let idx = allCasesIndexCache.get(allCases);
   if (!idx) {
     const byId = new Map<string, AccidentCase>();
+    const apiByIndustrySource = new Map<string, AccidentCase[]>();
+    const apiBySource: Record<SourceFilterTab, AccidentCase[]> = {
+      ALL: [],
+      FATALITY: [],
+      SIF: [],
+    };
+    const fallbackByIndustry: Record<IndustryType, AccidentCase[]> = {
+      건설현장: [],
+      제조업: [],
+      서비스업: [],
+    };
+    const apiByIndustry: Record<IndustryType, AccidentCase[]> = {
+      건설현장: [],
+      제조업: [],
+      서비스업: [],
+    };
+
+    const pushMap = (key: string, c: AccidentCase) => {
+      let arr = apiByIndustrySource.get(key);
+      if (!arr) {
+        arr = [];
+        apiByIndustrySource.set(key, arr);
+      }
+      arr.push(c);
+    };
+
     for (let i = 0; i < allCases.length; i++) {
-      byId.set(allCases[i].id, allCases[i]);
+      const c = allCases[i];
+      byId.set(c.id, c);
+      const isStd = isStandardModelCase(c);
+      if (isStd) {
+        fallbackByIndustry[c.industry].push(c);
+      } else {
+        apiByIndustry[c.industry].push(c);
+        apiBySource.ALL.push(c);
+        pushMap(`${c.industry}|ALL`, c);
+        const st = c.source_type || 'CASE';
+        if (st === 'FATALITY') {
+          apiBySource.FATALITY.push(c);
+          pushMap(`${c.industry}|FATALITY`, c);
+        } else if (st === 'SIF') {
+          apiBySource.SIF.push(c);
+          pushMap(`${c.industry}|SIF`, c);
+        }
+      }
     }
+
+    const otherIndustryApi: Record<IndustryType, AccidentCase[]> = {
+      건설현장: [...apiByIndustry['제조업'], ...apiByIndustry['서비스업']],
+      제조업: [...apiByIndustry['건설현장'], ...apiByIndustry['서비스업']],
+      서비스업: [...apiByIndustry['건설현장'], ...apiByIndustry['제조업']],
+    };
+    const otherIndustryFallback: Record<IndustryType, AccidentCase[]> = {
+      건설현장: [...fallbackByIndustry['제조업'], ...fallbackByIndustry['서비스업']],
+      제조업: [...fallbackByIndustry['건설현장'], ...fallbackByIndustry['서비스업']],
+      서비스업: [...fallbackByIndustry['건설현장'], ...fallbackByIndustry['제조업']],
+    };
+
     idx = {
       byId,
+      apiByIndustrySource,
+      apiBySource,
+      fallbackByIndustry,
+      otherIndustryApi,
+      otherIndustryFallback,
       primaryPools: new Map(),
       crossPools: new Map(),
     };
@@ -303,53 +369,87 @@ function getCachedPrimaryPools(
   const hit = index.primaryPools.get(cacheKey);
   if (hit) return hit;
 
-  const sourceFiltered =
-    sourceFilter === 'ALL'
-      ? allCases
-      : allCases.filter((c) => (c.source_type || 'CASE') === sourceFilter);
-  const candidatePool = sourceFiltered.length > 0 ? sourceFiltered : allCases;
-
-  const exactSameInd: ScoredCase[] = [];
-  const exactOtherInd: ScoredCase[] = [];
-  const sameIndustryList: AccidentCase[] = [];
-
-  for (let i = 0; i < candidatePool.length; i++) {
-    const c = candidatePool[i];
-    if (c.industry === industry) {
-      sameIndustryList.push(c);
-    }
+  // Fast O(bucket) lookup instead of scanning all 7,555 cases across every industry
+  const sameIndApi = index.apiByIndustrySource.get(`${industry}|${sourceFilter}`) ?? [];
+  const exactSameIndApi: ScoredCase[] = [];
+  for (let i = 0; i < sameIndApi.length; i++) {
+    const c = sameIndApi[i];
     if (c.work_type === workType) {
-      const sc: ScoredCase = {
+      exactSameIndApi.push({
         item: c,
-        score: c.industry === industry ? 120 : 100,
+        score: 120,
         isExact: true,
         reason: '선택 작업유형 정확 일치',
-      };
-      if (c.industry === industry) {
-        exactSameInd.push(sc);
-      } else {
-        exactOtherInd.push(sc);
-      }
+      });
     }
   }
 
-  const exactPool = exactSameInd.length > 0 ? exactSameInd : exactOtherInd;
+  let exactPool: ScoredCase[] = exactSameIndApi;
+
+  // Only check other-industry API cases or built-in fallback models when same-industry exact matches are empty
+  if (exactPool.length === 0) {
+    const allApiForSource = index.apiBySource[sourceFilter];
+    const exactOtherIndApi: ScoredCase[] = [];
+    for (let i = 0; i < allApiForSource.length; i++) {
+      const c = allApiForSource[i];
+      if (c.industry !== industry && c.work_type === workType) {
+        exactOtherIndApi.push({
+          item: c,
+          score: 100,
+          isExact: true,
+          reason: '선택 작업유형 정확 일치',
+        });
+      }
+    }
+    if (exactOtherIndApi.length > 0) {
+      exactPool = exactOtherIndApi;
+    } else if (sameIndApi.length === 0 && allApiForSource.length === 0) {
+      // Strictly fallback to built-in standard models only when 0 API cases exist for this filter
+      const sameIndFb = index.fallbackByIndustry[industry];
+      const exactSameFb: ScoredCase[] = [];
+      for (let i = 0; i < sameIndFb.length; i++) {
+        const c = sameIndFb[i];
+        if (c.work_type === workType) {
+          exactSameFb.push({
+            item: c,
+            score: 120,
+            isExact: true,
+            reason: '선택 작업유형 정확 일치',
+          });
+        }
+      }
+      exactPool = exactSameFb;
+    }
+  }
+
   if (exactPool.length > 1) {
     exactPool.sort((a, b) => compareNewestFirst(a.item, b.item));
   }
 
+  const sameIndustryList =
+    sameIndApi.length > 0 ? sameIndApi : index.fallbackByIndustry[industry];
+
   let similarPool: ScoredCase[] = [];
   let sameIndustryFallback: ScoredCase[] = [];
 
-  // Only perform full similarity scoring when exactPool has < 2 entries
+  // Only perform similarity scoring when exactPool has < 2 entries, scoped to same-industry bucket first
   if (exactPool.length < 2) {
     const targetMask = getMechanismMask(workType);
     const targetTokens = tokenizeKorean(workType);
 
-    const scoredAll = new Array<ScoredCase>(candidatePool.length);
-    for (let i = 0; i < candidatePool.length; i++) {
+    const scoringInput =
+      sameIndApi.length > 0
+        ? sameIndApi
+        : index.apiBySource[sourceFilter].length > 0
+          ? index.apiBySource[sourceFilter]
+          : index.fallbackByIndustry[industry].length > 0
+            ? index.fallbackByIndustry[industry]
+            : allCases;
+
+    const scoredAll = new Array<ScoredCase>(scoringInput.length);
+    for (let i = 0; i < scoringInput.length; i++) {
       scoredAll[i] = scoreCaseMatchFast(
-        candidatePool[i],
+        scoringInput[i],
         industry,
         workType,
         targetMask,
@@ -370,12 +470,18 @@ function getCachedPrimaryPools(
     sameIndustryFallback = scoredAll.filter((s) => s.item.industry === industry);
   } else {
     // Lightweight fallback list only used if exactPool ever collapses on regenerate
-    sameIndustryFallback = sameIndustryList.slice(0, 60).map((c) => ({
-      item: c,
-      score: c.work_type === workType ? 120 : 40,
-      isExact: c.work_type === workType,
-      reason: c.work_type === workType ? '선택 작업유형 정확 일치' : '동일 업종 유사 위험 사례',
-    }));
+    const cap = Math.min(sameIndustryList.length, 60);
+    sameIndustryFallback = new Array<ScoredCase>(cap);
+    for (let i = 0; i < cap; i++) {
+      const c = sameIndustryList[i];
+      const isExact = c.work_type === workType;
+      sameIndustryFallback[i] = {
+        item: c,
+        score: isExact ? 120 : 40,
+        isExact,
+        reason: isExact ? '선택 작업유형 정확 일치' : '동일 업종 유사 위험 사례',
+      };
+    }
   }
 
   const entry: CachedPrimaryPools = {
@@ -403,14 +509,22 @@ function findCrossProcessCase(
     const pMask = getCaseWorkHazardMask(primary);
     const pRelated = primary.related_work_types;
 
-    // Single-pass top-score collector (avoids O(N log N) sorting over 7,545 items)
-    let topScore = -1;
-    const scores = new Int16Array(allCases.length);
+    // Prioritize real KOSHA API cases from OTHER industries; fallback to built-in cross-industry templates only before other shards load
+    const otherApi = index.otherIndustryApi[primary.industry];
+    const searchPool =
+      otherApi.length > 0
+        ? otherApi
+        : index.otherIndustryFallback[primary.industry].length > 0
+          ? index.otherIndustryFallback[primary.industry]
+          : allCases;
 
-    for (let i = 0; i < allCases.length; i++) {
-      const c = allCases[i];
-      let score = 0;
-      if (c.industry !== primary.industry) score += 45;
+    let topScore = -1;
+    const scores = new Int16Array(searchPool.length);
+
+    for (let i = 0; i < searchPool.length; i++) {
+      const c = searchPool[i];
+      let score = 45; // Already guaranteed cross-industry when using otherApi/otherFallback
+      if (c.industry === primary.industry) score = 0;
       if (c.hazard_type === primary.hazard_type) score += 40;
       if (
         pRelated.includes(c.work_type) ||
@@ -426,19 +540,18 @@ function findCrossProcessCase(
 
     const threshold = Math.max(topScore - 18, 25);
     const collected: AccidentCase[] = [];
-    for (let i = 0; i < allCases.length; i++) {
+    for (let i = 0; i < searchPool.length; i++) {
       if (scores[i] >= threshold) {
-        collected.push(allCases[i]);
+        collected.push(searchPool[i]);
       }
     }
 
-    topPool = collected.length > 0 ? collected : allCases.slice(0, 30);
+    topPool = collected.length > 0 ? collected : searchPool.slice(0, 30);
     index.crossPools.set(crossKey, topPool);
   }
 
   const recentSet = recentRelatedIds.length > 0 ? new Set(recentRelatedIds) : null;
 
-  // Fast random-offset scan without allocating intermediate arrays when pool is large
   const len = topPool.length;
   const startIdx = Math.abs(seed) % len;
   let fallback: AccidentCase | null = null;

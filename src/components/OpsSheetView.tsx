@@ -10,6 +10,7 @@ import {
   Globe,
   ClipboardCheck,
   Lock,
+  FileText,
   RotateCcw,
   Plus,
   X,
@@ -31,7 +32,10 @@ import {
   formatCrossProcessSummaryVerbatim,
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
+  getCrossProcessSourceBadge,
+  getDisplaySourceRef,
   getSourceBrandStyle,
+  isOfficialKoshaApiCase,
   splitSifBracketHighlights,
 } from '../utils/textFit';
 
@@ -137,15 +141,25 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
     225
   );
 
-  const measuresSourceCaption = isMeasuresEdited
-    ? '공단 권고안 기반 · 현장 맞춤 반영'
-    : isSif
-      ? '공단 원문 (SIF 위험성감소대책)'
-      : '공단 원문 가이드';
+  const isOfficialKosha = isOfficialKoshaApiCase(c);
 
-  const tbmSourceCaption = isTbmEdited
-    ? '공단 권고안 기반 · 현장 맞춤 반영'
-    : '공단 원문 가이드';
+  const measuresSourceCaption = isOfficialKosha
+    ? isMeasuresEdited
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : isSif
+        ? '공단 원문 (SIF 위험성감소대책)'
+        : '공단 원문 가이드'
+    : isMeasuresEdited
+      ? '표준 가이드 기반 · 현장 맞춤 반영'
+      : '표준 가이드';
+
+  const tbmSourceCaption = isOfficialKosha
+    ? isTbmEdited
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : '공단 원문 가이드'
+    : isTbmEdited
+      ? '표준 가이드 기반 · 현장 맞춤 반영'
+      : '표준 가이드';
 
   const handleChangeMeasureText = (idx: number, val: string) => {
     if (!onUpdateMeasures) return;
@@ -199,16 +213,23 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
           <h2 className="text-[12.8px] font-bold text-slate-950 tracking-tight">
             01. 중대재해 사고 개요 및 발생 메커니즘
           </h2>
-          <span
-            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm text-[9.4px] font-bold shrink-0 ${
-              inkSaver
-                ? 'bg-slate-100 text-slate-900 border border-slate-400'
-                : 'bg-slate-800 text-white'
-            }`}
-          >
-            <Lock className="w-2.5 h-2.5 shrink-0" />
-            <span>공단 공식 원문</span>
-          </span>
+          {isOfficialKosha ? (
+            <span
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm text-[9.4px] font-bold shrink-0 ${
+                inkSaver
+                  ? 'bg-slate-100 text-slate-900 border border-slate-400'
+                  : 'bg-slate-800 text-white'
+              }`}
+            >
+              <Lock className="w-2.5 h-2.5 shrink-0" />
+              <span>공단 공식 원문</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm text-[9.4px] font-bold shrink-0 bg-slate-100 text-slate-700 border border-slate-300">
+              <FileText className="w-2.5 h-2.5 shrink-0" />
+              <span>표준 교육모델</span>
+            </span>
+          )}
           {overviewFit.isExcerpted && (
             <span className="px-1.5 py-0.5 rounded-sm bg-amber-100 border border-amber-300 text-amber-900 text-[9.2px] font-bold shrink-0">
               [원문 일부 발췌]
@@ -504,8 +525,17 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               className="text-[10.2px] font-extrabold mb-1 flex items-center gap-1"
               style={{ color: inkSaver ? '#0F172A' : theme.accentTextHex }}
             >
-              <Lock className="w-2.5 h-2.5 shrink-0" />
-              <span>핵심 위험요인 및 발생원인 (원문 고정)</span>
+              {isOfficialKosha ? (
+                <>
+                  <Lock className="w-2.5 h-2.5 shrink-0" />
+                  <span>핵심 위험요인 및 발생원인 (원문 고정)</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-2.5 h-2.5 shrink-0" />
+                  <span>핵심 위험요인 및 발생원인 (표준 교육모델)</span>
+                </>
+              )}
             </p>
             <ul className="space-y-1">
               {c.direct_causes.map((cause, idx) => (
@@ -623,7 +653,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                     className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
                   >
                     <RotateCcw className="w-2.5 h-2.5" />
-                    <span>↺ 공단 원문 복원</span>
+                    <span>{isOfficialKosha ? '↺ 공단 원문 복원' : '↺ 표준 가이드 복원'}</span>
                   </button>
                 )}
               </div>
@@ -760,6 +790,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
     }
 
     const crossSummary = formatCrossProcessSummaryVerbatim(relatedCase);
+    const crossBadge = getCrossProcessSourceBadge(relatedCase);
 
     return (
       <section className="space-y-1">
@@ -769,6 +800,17 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               03. 유사 공정 주의 사례
             </h2>
             <span className="text-[10px] font-medium text-slate-600">타 업종 교차 경각심</span>
+            <span
+              className={`inline-flex items-center px-1.5 py-0.5 rounded-sm text-[9px] font-bold border ${
+                inkSaver
+                  ? 'border-slate-700 bg-white text-slate-900'
+                  : crossBadge.isStandard
+                    ? 'border-slate-300 bg-slate-100 text-slate-700'
+                    : 'border-amber-300 bg-amber-50 text-amber-900'
+              }`}
+            >
+              {crossBadge.label}
+            </span>
           </div>
           <span
             className={`inline-flex items-center gap-1 text-[10px] font-bold ${
@@ -871,7 +913,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
                 >
                   <RotateCcw className="w-2.5 h-2.5" />
-                  <span>↺ 원문 복원</span>
+                  <span>{isOfficialKosha ? '↺ 원문 복원' : '↺ 표준 복원'}</span>
                 </button>
               )}
             </div>
@@ -1260,13 +1302,17 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               />
             )}
             <span className="keep-all">
-              출처: {c.source_ref || sourceBrand.defaultSourceRef} · 코드 {c.id}
+              출처: {getDisplaySourceRef(c)} · 코드 {c.id}
             </span>
           </div>
           <span className="shrink-0 font-semibold">
-            {material.isCustomEdited
-              ? '대책: 공단 권고안 기반 · 현장 맞춤 반영'
-              : '사실·대책: 공단 공식 원문 기준'}{' '}
+            {isOfficialKosha
+              ? material.isCustomEdited
+                ? '대책: 공단 권고안 기반 · 현장 맞춤 반영'
+                : '사실·대책: 공단 공식 원문 기준'
+              : material.isCustomEdited
+                ? '대책: 표준 가이드 기반 · 현장 맞춤 반영'
+                : '사실·대책: 표준 교육모델 기준'}{' '}
             (A4)
           </span>
         </footer>
