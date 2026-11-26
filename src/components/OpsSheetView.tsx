@@ -91,7 +91,6 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   const isTbmEdited = Boolean(material.isTbmEdited);
   const canInlineEdit = !isPrintClone && Boolean(onUpdateMeasures && onUpdateTbm);
 
-  const siteLabel = siteInfo.siteName.trim() || '________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
   const instructorLabel = siteInfo.instructorName.trim() || '________________';
 
@@ -1145,25 +1144,60 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
           </div>
 
           <div
-            className={`shrink-0 text-right border-l pl-3.5 space-y-0.5 text-[10px] ${
-              inkSaver ? 'border-slate-300' : 'border-white/25'
+            className={`shrink-0 text-right border-l pl-3.5 space-y-0.5 text-[10.3px] font-semibold ${
+              inkSaver ? 'border-slate-400 text-slate-900' : 'border-white/55 text-white'
             }`}
           >
             <div
-              className={`font-extrabold text-[11px] ${
-                inkSaver ? 'text-slate-950' : 'text-amber-300'
+              className={`font-extrabold text-[11.2px] ${
+                inkSaver ? 'text-slate-950' : 'text-yellow-200'
               }`}
             >
               재해유형: {c.hazard_type}
             </div>
-            <div className={`tabular-nums ${inkSaver ? 'text-slate-800' : 'text-slate-100'}`}>
-              교육일자: {dateLabel}
+            <div className={`tabular-nums ${inkSaver ? 'text-slate-900' : 'text-white'}`}>
+              <span className={inkSaver ? 'font-bold text-slate-950' : 'font-bold text-white'}>
+                교육일자:
+              </span>{' '}
+              {dateLabel}
             </div>
-            <div className={`max-w-[175px] break-words ${inkSaver ? 'text-slate-800' : 'text-slate-100'}`}>
-              현장: {siteLabel}
+            <div
+              className={`max-w-[180px] break-words ${
+                inkSaver ? 'text-slate-900' : 'text-white'
+              }`}
+            >
+              <span className={inkSaver ? 'font-bold text-slate-950' : 'font-bold text-white'}>
+                현장:
+              </span>{' '}
+              {siteInfo.siteName.trim() ? (
+                <span className="font-bold">{siteInfo.siteName.trim()}</span>
+              ) : (
+                <span
+                  aria-label="현장명 기입란"
+                  className={`inline-block w-[92px] border-b-[1.5px] align-baseline translate-y-[1px] ${
+                    inkSaver ? 'border-slate-700' : 'border-white/95'
+                  }`}
+                />
+              )}
             </div>
-            <div className={`max-w-[175px] break-words ${inkSaver ? 'text-slate-700' : 'text-slate-200'}`}>
-              강사: {instructorLabel}
+            <div
+              className={`max-w-[180px] break-words ${
+                inkSaver ? 'text-slate-900' : 'text-white'
+              }`}
+            >
+              <span className={inkSaver ? 'font-bold text-slate-950' : 'font-bold text-white'}>
+                강사:
+              </span>{' '}
+              {siteInfo.instructorName.trim() ? (
+                <span className="font-bold">{siteInfo.instructorName.trim()}</span>
+              ) : (
+                <span
+                  aria-label="강사명 기입란"
+                  className={`inline-block w-[92px] border-b-[1.5px] align-baseline translate-y-[1px] ${
+                    inkSaver ? 'border-slate-700' : 'border-white/95'
+                  }`}
+                />
+              )}
             </div>
           </div>
         </header>

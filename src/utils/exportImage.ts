@@ -46,8 +46,14 @@ async function captureNodeDataUrl(
       };
 
   const exportFilter = (domNode: HTMLElement): boolean => {
-    if (domNode instanceof HTMLElement && domNode.dataset?.exportHide === 'true') {
-      return false;
+    if (domNode && typeof (domNode as Element).getAttribute === 'function') {
+      const el = domNode as Element;
+      if (
+        el.getAttribute('data-export-hide') === 'true' ||
+        el.classList?.contains('no-print')
+      ) {
+        return false;
+      }
     }
     return true;
   };

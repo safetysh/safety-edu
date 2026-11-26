@@ -27,39 +27,292 @@ interface OpsReferenceSheetViewProps {
   onNotify?: (type: 'success' | 'error', message: string) => void;
 }
 
+interface ParsedLegalClause {
+  index: number;
+  headerLine: string;
+  subLines: string[];
+  fullText: string;
+  hasAmendment: boolean;
+  amendmentYear: number;
+  isNewlyAdded: boolean;
+}
+
+const CLAUSE_MARKER_RE = /^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/;
+const AMEND_TAG_RE = /<(신설|개정)\s*([^>]+)>/g;
+
+function parseLegalClauses(cleanText: string): ParsedLegalClause[] {
+  const rawLines = cleanText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const blocks: Array<{ headerLine: string; subLines: string[] }> = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const ln = rawLines[i];
+    if (CLAUSE_MARKER_RE.test(ln) || blocks.length === 0) {
+      blocks.push({ headerLine: ln, subLines: [] });
+    } else {
+      blocks[blocks.length - 1].subLines.push(ln);
+    }
+  }
+
+  return blocks.map((b, index) => {
+    const fullText = [b.headerLine, ...b.subLines].join('\n');
+    let hasAmendment = false;
+    let isNewlyAdded = false;
+    let amendmentYear = 0;
+
+    AMEND_TAG_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = AMEND_TAG_RE.exec(fullText)) !== null) {
+      hasAmendment = true;
+      if (match[1] === '신설') isNewlyAdded = true;
+      const years = match[2].match(/\b(20\d{2})\b/g);
+      if (years) {
+        for (const y of years) {
+          const num = parseInt(y, 10);
+          if (num > amendmentYear) amendmentYear = num;
+        }
+      }
+    }
+
+    return {
+      index,
+      headerLine: b.headerLine,
+      subLines: b.subLines,
+      fullText,
+      hasAmendment,
+      amendmentYear,
+      isNewlyAdded,
+    };
+  });
+}
+
+function buildClauseWithinBudget(clause: ParsedLegalClause, budget: number): string {
+  if (clause.fullText.length <= budget) {
+    return clause.fullText;
+  }
+
+  const lines: string[] = [];
+  let acc = 0;
+
+  if (clause.headerLine.length <= budget) {
+    lines.push(clause.headerLine);
+    acc = clause.headerLine.length;
+  } else {
+    const slice = clause.headerLine.slice(0, Math.max(budget, 80));
+    const lastPeriod = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('다.'));
+    return lastPeriod > slice.length * 0.45 ? slice.slice(0, lastPeriod + 1) : slice;
+  }
+
+  // Include numbered sub-items cleanly in statutory order until budget is reached
+  let skippedAny = false;
+  for (let i = 0; i < clause.subLines.length; i++) {
+    const sub = clause.subLines[i];
+    if (acc + sub.length + 1 <= budget) {
+      lines.push(sub);
+      acc += sub.length + 1;
+    } else {
+      skippedAny = true;
+      // Keep scanning for shorter critical numbered clauses (e.g. height/PPE limits) only if not sub-item 가/나/다
+      if (/^[가나다라마바]\./.test(sub)) {
+        continue;
+      }
+      // If a numbered item is short and high-value (e.g., 3.5m / 2m / 안전모 / 안전대 / 연동장치), try fitting it
+      if (/3\.5미터|2미터|안전대|안전모|아웃트리거|연동장치|감응형/.test(sub) && acc + sub.length + 10 <= budget) {
+        if (lines[lines.length - 1] !== '… (일부 호 생략)') {
+          lines.push('… (일부 호 생략)');
+          acc += 11;
+        }
+        lines.push(sub);
+        acc += sub.length + 1;
+      }
+    }
+  }
+
+  if (skippedAny && lines.length < 1 + clause.subLines.length) {
+    const lastLine = lines[lines.length - 1];
+    if (lastLine !== '… (이하 일부 호 생략)' && lastLine !== '… (일부 호 생략)') {
+      lines.push('… (이하 일부 호 생략)');
+    }
+  }
+
+  return lines.join('\n');
+}
+
 /**
- * Fits verbatim legal rule text cleanly onto A4 Page 2 without altering legal wording.
- * Applies sentence/clause-boundary excerpting only when text exceeds the available budget.
+ * Smart verbatim legal clause excerpter for A4 Page 2.
+ * Preserves statutory wording 100% (only strips stray HTML tags), and when an article
+ * exceeds the A4 character budget, prioritizes Clause 1 + recently amended/newly added
+ * or case-relevant clauses (e.g., Article 42 para 1 + para 4 newly added 2024.06.28).
  */
-function fitLegalTextForPage2(rawText: string, maxChars: number): {
+function fitLegalTextForPage2(
+  rawText: string,
+  maxChars: number,
+  contextKeywords: string[],
+  latestAmendedDate?: string
+): {
   text: string;
   isExcerpted: boolean;
 } {
-  const clean = (rawText || '').trim();
+  // Strip stray HTML tags only (zero rewording)
+  const clean = (rawText || '').replace(/<\/?[a-zA-Z][^>]*>/g, '').trim();
   if (clean.length <= maxChars) {
     return { text: clean, isExcerpted: false };
   }
 
-  // Prefer cutting cleanly at paragraph/line boundary first
-  const lines = clean.split('\n');
+  const clauses = parseLegalClauses(clean);
+
+  // Single-block article (no ①/② markers, e.g. Article 68): cut cleanly at line boundaries
+  if (clauses.length <= 1) {
+    return {
+      text: buildClauseWithinBudget(clauses[0], maxChars),
+      isExcerpted: true,
+    };
+  }
+
+  const targetYear = latestAmendedDate ? parseInt(latestAmendedDate.slice(0, 4), 10) || 0 : 0;
+  const maxAmendYear = clauses.reduce((m, cl) => Math.max(m, cl.amendmentYear), 0);
+
+  // Score non-first clauses by recency of amendment/addition and case keyword relevance
+  const scoredSecondary = clauses.slice(1).map((cl) => {
+    let score = 0;
+    if (cl.hasAmendment) {
+      score += 40;
+      if (cl.isNewlyAdded) score += 35;
+      if (targetYear > 0 && cl.amendmentYear >= targetYear) score += 70;
+      else if (maxAmendYear > 0 && cl.amendmentYear === maxAmendYear) score += 55;
+      if (cl.amendmentYear >= 2024) score += 30;
+    }
+
+    let kwHits = 0;
+    for (let i = 0; i < contextKeywords.length; i++) {
+      const kw = contextKeywords[i];
+      if (kw.length >= 2 && cl.fullText.includes(kw)) {
+        kwHits++;
+      }
+    }
+    score += Math.min(kwHits, 4) * 35;
+
+    return { clause: cl, score };
+  });
+
+  scoredSecondary.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.clause.index - b.clause.index;
+  });
+
+  const bestSecondary = scoredSecondary[0];
+  const hasHighPrioritySecondary = Boolean(bestSecondary && bestSecondary.score >= 55);
+
+  // Strategy A: Anchor ①항 + Top amended/context-matched clause (e.g. 제42조 ①항 + ④항)
+  if (hasHighPrioritySecondary && bestSecondary) {
+    const first = clauses[0];
+    const target = bestSecondary.clause;
+    const isAdjacent = target.index === 1;
+    const omitMarker = isAdjacent ? '' : '… (중략) …';
+    const overhead = omitMarker ? omitMarker.length + 2 : 1;
+
+    // Give ①항 its clean lead header (or full text if compact), and give the bulk of budget to the priority clause
+    const firstBudget = Math.min(first.fullText.length, Math.max(first.headerLine.length + 4, Math.floor(maxChars * 0.28)));
+    const firstText =
+      first.fullText.length <= firstBudget
+        ? first.fullText
+        : buildClauseWithinBudget(first, firstBudget);
+
+    const remainingForTarget = Math.max(180, maxChars - firstText.length - overhead);
+    const targetText = buildClauseWithinBudget(target, remainingForTarget);
+
+    const parts = [firstText];
+    if (omitMarker) parts.push(omitMarker);
+    parts.push(targetText);
+
+    // If budget still has generous room, try including a second high-scoring clause in statutory order
+    const usedLen = parts.join('\n').length;
+    const secondCandidate = scoredSecondary[1];
+    if (
+      secondCandidate &&
+      secondCandidate.score >= 45 &&
+      usedLen + secondCandidate.clause.headerLine.length + 30 <= maxChars
+    ) {
+      const pickedIndices = [0, target.index, secondCandidate.clause.index].sort((a, b) => a - b);
+      const rebuilt: string[] = [];
+      let rem = maxChars;
+      for (let p = 0; p < pickedIndices.length; p++) {
+        const cIdx = pickedIndices[p];
+        if (p > 0 && cIdx - pickedIndices[p - 1] > 1) {
+          rebuilt.push('… (중략) …');
+          rem -= 10;
+        }
+        const cl = clauses[cIdx];
+        const share =
+          cIdx === target.index
+            ? Math.max(220, Math.floor(rem * 0.65))
+            : Math.min(cl.fullText.length, Math.max(cl.headerLine.length + 2, Math.floor(rem / (pickedIndices.length - p))));
+        const chunk = buildClauseWithinBudget(cl, share);
+        rebuilt.push(chunk);
+        rem -= chunk.length + 1;
+      }
+      return { text: rebuilt.join('\n'), isExcerpted: true };
+    }
+
+    return { text: parts.join('\n'), isExcerpted: true };
+  }
+
+  // Strategy B: Sequential clause selection from ①항 when no later clause stands out
   const picked: string[] = [];
   let acc = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const ln = lines[i];
-    if (acc + ln.length + 1 <= maxChars) {
-      picked.push(ln);
-      acc += ln.length + 1;
+  for (let i = 0; i < clauses.length; i++) {
+    const cl = clauses[i];
+    if (acc + cl.fullText.length + 1 <= maxChars) {
+      picked.push(cl.fullText);
+      acc += cl.fullText.length + 1;
+    } else if (acc + cl.headerLine.length + 20 <= maxChars) {
+      picked.push(buildClauseWithinBudget(cl, maxChars - acc - 1));
+      break;
     } else if (picked.length === 0) {
-      // Single long line fallback: break at last period before maxChars
-      const slice = ln.slice(0, maxChars);
-      const lastPeriod = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('다.'));
-      picked.push(lastPeriod > maxChars * 0.45 ? slice.slice(0, lastPeriod + 1) : slice);
+      picked.push(buildClauseWithinBudget(cl, maxChars));
       break;
     } else {
       break;
     }
   }
+
   return { text: picked.join('\n'), isExcerpted: true };
+}
+
+/**
+ * Allocates Section A's total character budget dynamically across rendered laws so
+ * compact articles (e.g. 제68조 369자) donate unused budget to long articles (e.g. 제42조 1,402자).
+ */
+function allocateLawCharBudgets(contents: string[], totalBudget: number): number[] {
+  if (contents.length === 0) return [];
+  const lengths = contents.map((t) => (t || '').replace(/<\/?[a-zA-Z][^>]*>/g, '').trim().length);
+  const budgets = new Array<number>(contents.length).fill(0);
+  const remainingIndices = new Set<number>(contents.map((_, i) => i));
+  let remainingBudget = totalBudget;
+
+  while (remainingIndices.size > 0 && remainingBudget > 0) {
+    const fairShare = Math.floor(remainingBudget / remainingIndices.size);
+    let satisfiedAny = false;
+    for (const idx of Array.from(remainingIndices)) {
+      if (lengths[idx] <= fairShare) {
+        budgets[idx] = lengths[idx];
+        remainingBudget -= lengths[idx];
+        remainingIndices.delete(idx);
+        satisfiedAny = true;
+      }
+    }
+    if (!satisfiedAny) {
+      const split = Math.floor(remainingBudget / remainingIndices.size);
+      for (const idx of remainingIndices) {
+        budgets[idx] = split;
+      }
+      break;
+    }
+  }
+
+  return budgets;
 }
 
 export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React.memo(
@@ -80,6 +333,28 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
       () => (legalRef?.qrMedia ?? []).slice(0, 4),
       [legalRef?.qrMedia]
     );
+
+    const contextKeywords = useMemo(() => {
+      const raw = [
+        c.equipment,
+        c.work_type,
+        c.title,
+        c.hazard_type,
+        legalRef?.matchedGroupKey || '',
+      ]
+        .join(' ')
+        .replace(/[·/(),\-:]/g, ' ');
+      const tokens = raw
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2);
+      const unique = Array.from(new Set(tokens));
+      // Add compound safety phrases when implied by work_type/equipment
+      if (unique.some((t) => t.includes('사다리') || t.includes('비계'))) {
+        unique.push('이동식 사다리', '아웃트리거', '작업발판');
+      }
+      return unique;
+    }, [c.equipment, c.work_type, c.title, c.hazard_type, legalRef?.matchedGroupKey]);
 
     useEffect(() => {
       if (!showMediaQr || visibleQrItems.length === 0) return;
@@ -107,18 +382,16 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
     const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
     const siteLabel = siteInfo.siteName.trim() || '________________';
 
-    // Allocate verbatim legal text budget dynamically based on which Page 2 sections are enabled
+    // Allocate verbatim legal text budget dynamically across laws so compact articles donate budget to long ones
     const activeSectionCount =
       (showLaws ? 1 : 0) + (showGuides ? 1 : 0) + (showMediaQr ? 1 : 0);
     const lawsToRender = legalRef.laws.slice(0, activeSectionCount === 1 ? 3 : 2);
-    const perLawBudget =
-      activeSectionCount === 1
-        ? 1100
-        : activeSectionCount === 2
-          ? 760
-          : lawsToRender.length >= 2
-            ? 430
-            : 820;
+    const sectionATotalBudget =
+      activeSectionCount === 1 ? 2250 : activeSectionCount === 2 ? 1620 : 1295;
+    const lawBudgets = allocateLawCharBudgets(
+      lawsToRender.map((l) => l.content),
+      sectionATotalBudget
+    );
 
     const handleExportAppendixPng = async () => {
       if (!appendixRef.current || isExportingPng) return;
@@ -209,7 +482,7 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
         {/* A4 210mm x 297mm Reference Appendix Sheet */}
         <div
           ref={appendixRef}
-          className={`ops-print-page ops-appendix-page bg-white text-slate-900 border border-slate-300 flex flex-col justify-between overflow-hidden ${
+          className={`ops-print-page ops-appendix-page bg-white text-slate-900 border border-slate-300 flex flex-col overflow-hidden ${
             isPrintClone ? 'w-[210mm] h-[297mm]' : 'w-[794px] h-[1123px] ops-sheet-shadow'
           }`}
         >
@@ -265,7 +538,11 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
           </div>
 
           {/* Dynamic Checked Sections Body */}
-          <div className="flex-1 px-6 py-3 flex flex-col justify-between gap-2.5 overflow-hidden">
+          <div
+            className={`flex-1 px-6 py-4 flex flex-col justify-start overflow-hidden ${
+              activeSectionCount === 3 ? 'gap-4' : 'gap-5'
+            }`}
+          >
             {activeSectionCount === 0 && (
               <div className="flex-1 flex items-center justify-center text-[12px] text-slate-500 border border-dashed border-slate-300 rounded-md">
                 좌측 ‘2면 참고 별지 출력’ 하위 체크박스에서 출력할 항목을 1개 이상 선택해 주세요.
@@ -288,8 +565,13 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
                 </div>
 
                 <div className="space-y-1.5">
-                  {lawsToRender.map((law) => {
-                    const fitted = fitLegalTextForPage2(law.content, perLawBudget);
+                  {lawsToRender.map((law, lawIdx) => {
+                    const fitted = fitLegalTextForPage2(
+                      law.content,
+                      lawBudgets[lawIdx] ?? 500,
+                      contextKeywords,
+                      law.latest_amended_date
+                    );
                     return (
                       <div
                         key={law.id}
@@ -506,16 +788,18 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
                           {m.title}
                         </p>
 
-                        <a
-                          href={m.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-export-hide="true"
-                          className="no-print inline-flex items-center gap-0.5 text-[8.8px] font-bold text-orange-700 hover:underline"
-                        >
-                          <span>바로 열기</span>
-                          <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
+                        {!isPrintClone && (
+                          <a
+                            href={m.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            data-export-hide="true"
+                            className="no-print inline-flex items-center gap-0.5 text-[8.8px] font-bold text-orange-700 hover:underline"
+                          >
+                            <span>바로 열기</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -524,8 +808,8 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
             )}
           </div>
 
-          {/* Bottom Footer */}
-          <footer className="shrink-0 border-t border-slate-300 px-6 py-2 bg-slate-50 flex items-center justify-between gap-3 text-[9.5px] text-slate-600 tabular-nums">
+          {/* Bottom Footer pinned cleanly to the bottom of A4 */}
+          <footer className="mt-auto shrink-0 border-t border-slate-300 px-6 py-2 bg-slate-50 flex items-center justify-between gap-3 text-[9.5px] text-slate-600 tabular-nums">
             <div className="flex items-center gap-2 min-w-0">
               {siteInfo.logoDataUrl && (
                 <img
