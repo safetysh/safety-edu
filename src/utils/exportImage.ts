@@ -37,11 +37,14 @@ async function captureNodeDataUrl(
 
   const sizeOptions = hasExactTarget
     ? {
+        width: rectWidth,
+        height: rectHeight,
         canvasWidth: Math.round(targetPixelWidth),
         canvasHeight: Math.round((targetPixelWidth * rectHeight) / rectWidth),
         pixelRatio: 1,
       }
     : {
+        ...(rectWidth > 0 && rectHeight > 0 ? { width: rectWidth, height: rectHeight } : {}),
         pixelRatio: 2,
       };
 
@@ -79,7 +82,36 @@ async function captureNodeDataUrl(
   }
 }
 
-function triggerDownload(href: string, fileName: string): void {
+export function isInAppBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /KAKAOTALK|NAVER|FBAN|FBAV|Instagram|Line\/|BAND\//i.test(navigator.userAgent || '');
+}
+
+export interface CapturedPngAsset {
+  dataUrl: string;
+  blob: Blob;
+  file: File;
+  fileName: string;
+}
+
+/**
+ * Captures a DOM node into a high-res PNG dataUrl + Blob + File bundle suitable for
+ * direct download, Web Share API, or mobile long-press preview fallback modal.
+ */
+export async function captureNodeAsPngResult(
+  node: HTMLElement,
+  baseTitle: string,
+  dateStr: string,
+  targetPixelWidth?: number
+): Promise<CapturedPngAsset> {
+  const dataUrl = await captureNodeDataUrl(node, targetPixelWidth);
+  const blob = dataUrlToBlob(dataUrl);
+  const fileName = `${sanitizeName(baseTitle)}_${dateStr}.png`;
+  const file = new File([blob], fileName, { type: 'image/png' });
+  return { dataUrl, blob, file, fileName };
+}
+
+export function triggerDownload(href: string, fileName: string): void {
   const link = document.createElement('a');
   link.download = fileName;
   link.href = href;
@@ -121,43 +153,40 @@ function parseSvgIntrinsicSize(svgText: string): { width: number; height: number
 }
 
 /**
- * Normalizes uploaded company/site logo images for universal compatibility across
- * HTML preview, high-res PNG capture, A4 print, and client-side PptxGenJS (.pptx) export.
- * Converts SVG and WebP logos to high-resolution transparent PNG via offscreen Canvas.
+ * Normalizes and downscales ANY uploaded company/site logo image (including 5~15MB smartphone photos)
+ * via offscreen Canvas to max 400px longest edge so localStorage never hits QuotaExceededError
+ * while preserving crisp quality on A4 footers, PNG exports, and PPTX slides.
  */
 export async function normalizeLogoFileToDataUrl(
-  file: File
-): Promise<{ dataUrl: string; convertedToPng: boolean }> {
+  file: File,
+  maxLongestEdge = 400
+): Promise<{ dataUrl: string; convertedToPng: boolean; compressed: boolean }> {
   const mime = (file.type || '').toLowerCase();
   const lowerName = file.name.toLowerCase();
   const isSvg = mime === 'image/svg+xml' || lowerName.endsWith('.svg');
   const isWebp = mime === 'image/webp' || lowerName.endsWith('.webp');
-
-  if (!isSvg && !isWebp) {
-    const dataUrl = await readFileAsDataUrl(file);
-    return { dataUrl, convertedToPng: false };
-  }
+  const isJpeg = mime === 'image/jpeg' || /\.(jpe?g)$/i.test(lowerName);
 
   let objectUrl = '';
   let svgHintSize: { width: number; height: number } | null = null;
 
-  if (isSvg) {
-    const rawSvg = await file.text();
-    svgHintSize = parseSvgIntrinsicSize(rawSvg);
-    let normalizedSvg = rawSvg;
-    if (svgHintSize && !/\bwidth\s*=/i.test(rawSvg.split('>')[0] || '')) {
-      normalizedSvg = rawSvg.replace(
-        /<svg\b/i,
-        `<svg width="${svgHintSize.width}" height="${svgHintSize.height}"`
-      );
-    }
-    const svgBlob = new Blob([normalizedSvg], { type: 'image/svg+xml;charset=utf-8' });
-    objectUrl = URL.createObjectURL(svgBlob);
-  } else {
-    objectUrl = URL.createObjectURL(file);
-  }
-
   try {
+    if (isSvg) {
+      const rawSvg = await file.text();
+      svgHintSize = parseSvgIntrinsicSize(rawSvg);
+      let normalizedSvg = rawSvg;
+      if (svgHintSize && !/\bwidth\s*=/i.test(rawSvg.split('>')[0] || '')) {
+        normalizedSvg = rawSvg.replace(
+          /<svg\b/i,
+          `<svg width="${svgHintSize.width}" height="${svgHintSize.height}"`
+        );
+      }
+      const svgBlob = new Blob([normalizedSvg], { type: 'image/svg+xml;charset=utf-8' });
+      objectUrl = URL.createObjectURL(svgBlob);
+    } else {
+      objectUrl = URL.createObjectURL(file);
+    }
+
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.decoding = 'async';
@@ -170,8 +199,10 @@ export async function normalizeLogoFileToDataUrl(
     const baseH = img.naturalHeight || svgHintSize?.height || 160;
     const maxEdge = Math.max(baseW, baseH, 1);
 
-    // Target crisp high-res output (minimum 800px longest side for vector/small logos, capped at 1200px)
-    const targetLongest = Math.min(1200, Math.max(800, maxEdge * 2));
+    // Downscale oversized images (or rasterize SVG/WebP) to <= maxLongestEdge (default 400px)
+    const targetLongest = isSvg
+      ? Math.min(maxLongestEdge, Math.max(240, maxEdge))
+      : Math.min(maxLongestEdge, maxEdge);
     const scale = targetLongest / maxEdge;
     const targetW = Math.max(1, Math.round(baseW * scale));
     const targetH = Math.max(1, Math.round(baseH * scale));
@@ -188,12 +219,27 @@ export async function normalizeLogoFileToDataUrl(
     ctx.clearRect(0, 0, targetW, targetH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    if (isJpeg) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, targetW, targetH);
+    }
     ctx.drawImage(img, 0, 0, targetW, targetH);
 
+    const outMime = isJpeg ? 'image/jpeg' : 'image/png';
+    const dataUrl = isJpeg ? canvas.toDataURL(outMime, 0.85) : canvas.toDataURL(outMime);
+
     return {
-      dataUrl: canvas.toDataURL('image/png'),
-      convertedToPng: true,
+      dataUrl,
+      convertedToPng: isSvg || isWebp,
+      compressed: maxEdge > maxLongestEdge || file.size > 150 * 1024,
     };
+  } catch {
+    // Graceful fallback for exotic formats only if small enough for localStorage
+    if (!isSvg && !isWebp && file.size <= 300 * 1024) {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { dataUrl, convertedToPng: false, compressed: false };
+    }
+    throw new Error('로고 이미지를 변환할 수 없습니다.');
   } finally {
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl);

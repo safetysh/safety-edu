@@ -99,26 +99,38 @@ export function loadPersistedSitePrefs(todayDate: string): CustomSiteInfo {
   }
 }
 
-export function savePersistedSitePrefs(siteInfo: CustomSiteInfo): void {
-  if (typeof window === 'undefined') return;
+export function savePersistedSitePrefs(siteInfo: CustomSiteInfo): 'saved' | 'saved_without_logo' | 'failed' {
+  if (typeof window === 'undefined') return 'failed';
+  const basePayload: PersistedSitePrefs = {
+    siteName: siteInfo.siteName,
+    instructorName: siteInfo.instructorName,
+    includeCrossProcess: siteInfo.includeCrossProcess,
+    foreignLanguage: siteInfo.foreignLanguage,
+    seasonRisk: siteInfo.seasonRisk,
+    logoDataUrl: siteInfo.logoDataUrl,
+    logoFileName: siteInfo.logoFileName,
+    showTbmSignTable: siteInfo.showTbmSignTable,
+    inkSaverMode: siteInfo.inkSaverMode,
+    showPage1LegalSummary: siteInfo.showPage1LegalSummary,
+    showPage2Appendix: siteInfo.showPage2Appendix,
+    appendixSections: siteInfo.appendixSections,
+  };
   try {
-    const payload: PersistedSitePrefs = {
-      siteName: siteInfo.siteName,
-      instructorName: siteInfo.instructorName,
-      includeCrossProcess: siteInfo.includeCrossProcess,
-      foreignLanguage: siteInfo.foreignLanguage,
-      seasonRisk: siteInfo.seasonRisk,
-      logoDataUrl: siteInfo.logoDataUrl,
-      logoFileName: siteInfo.logoFileName,
-      showTbmSignTable: siteInfo.showTbmSignTable,
-      inkSaverMode: siteInfo.inkSaverMode,
-      showPage1LegalSummary: siteInfo.showPage1LegalSummary,
-      showPage2Appendix: siteInfo.showPage2Appendix,
-      appendixSections: siteInfo.appendixSections,
-    };
-    window.localStorage.setItem(SITE_PREFS_STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(SITE_PREFS_STORAGE_KEY, JSON.stringify(basePayload));
+    return 'saved';
   } catch {
-    // Ignore storage quota errors (e.g., private browsing) gracefully
+    // QuotaExceededError defense: preserve site metadata & toggles even if logo exceeds storage budget
+    try {
+      const fallbackPayload: PersistedSitePrefs = {
+        ...basePayload,
+        logoDataUrl: null,
+        logoFileName: '',
+      };
+      window.localStorage.setItem(SITE_PREFS_STORAGE_KEY, JSON.stringify(fallbackPayload));
+      return 'saved_without_logo';
+    } catch {
+      return 'failed';
+    }
   }
 }
 

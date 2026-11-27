@@ -17,14 +17,22 @@ import {
   ResolvedLegalReference,
 } from '../types/safety';
 import { generateLocalQrDataUrl } from '../utils/qrLocal';
-import { copyNodeAsPngToClipboard, downloadNodeAsPng } from '../utils/exportImage';
+import {
+  CapturedPngAsset,
+  captureNodeAsPngResult,
+  copyNodeAsPngToClipboard,
+  downloadNodeAsPng,
+  isInAppBrowser,
+} from '../utils/exportImage';
 
 interface OpsReferenceSheetViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
   legalRef: ResolvedLegalReference | null;
+  sheetRef?: React.RefObject<HTMLDivElement | null>;
   isPrintClone?: boolean;
   onNotify?: (type: 'success' | 'error', message: string) => void;
+  onOpenImageFallback?: (asset: CapturedPngAsset, label: string) => void;
 }
 
 interface ParsedLegalClause {
@@ -316,8 +324,17 @@ function allocateLawCharBudgets(contents: string[], totalBudget: number): number
 }
 
 export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React.memo(
-  ({ material, siteInfo, legalRef, isPrintClone = false, onNotify }) => {
-    const appendixRef = useRef<HTMLDivElement | null>(null);
+  ({
+    material,
+    siteInfo,
+    legalRef,
+    sheetRef,
+    isPrintClone = false,
+    onNotify,
+    onOpenImageFallback,
+  }) => {
+    const localAppendixRef = useRef<HTMLDivElement | null>(null);
+    const appendixRef = sheetRef ?? localAppendixRef;
     const [qrMap, setQrMap] = useState<Record<string, string>>({});
     const [isExportingPng, setIsExportingPng] = useState(false);
     const [isCopying, setIsCopying] = useState(false);
@@ -397,6 +414,16 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
       if (!appendixRef.current || isExportingPng) return;
       setIsExportingPng(true);
       try {
+        if (isInAppBrowser() && onOpenImageFallback) {
+          const asset = await captureNodeAsPngResult(
+            appendixRef.current,
+            `안전교육OPS_2면참고별지_${material.selectedWorkType}`,
+            dateLabel,
+            1600
+          );
+          onOpenImageFallback(asset, 'A4 2면 참고 별지 (고해상도 PNG)');
+          return;
+        }
         const fileName = await downloadNodeAsPng(
           appendixRef.current,
           `안전교육OPS_2면참고별지_${material.selectedWorkType}`,
@@ -435,12 +462,12 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
     };
 
     return (
-      <div className={isPrintClone ? 'ops-appendix-print-wrap' : 'w-[794px] space-y-2'}>
-        {/* Screen-only Action Bar for Page 2 Appendix (hidden in print & PNG capture) */}
+      <div className={isPrintClone ? 'ops-appendix-print-wrap' : 'w-[794px] lg:space-y-2'}>
+        {/* Desktop Screen-only Action Bar for Page 2 Appendix (hidden on mobile <1024px, print & PNG capture) */}
         {!isPrintClone && (
           <div
             data-export-hide="true"
-            className="no-print flex items-center justify-between gap-2 px-1"
+            className="no-print hidden lg:flex items-center justify-between gap-2 px-1"
           >
             <div className="flex items-center gap-2 text-[11.5px] font-bold text-slate-700">
               <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-[10px] font-extrabold">
@@ -753,7 +780,26 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
                     {visibleQrItems.map((m) => (
                       <div
                         key={m.url}
+                        onClick={
+                          !isPrintClone
+                            ? () => window.open(m.url, '_blank', 'noopener,noreferrer')
+                            : undefined
+                        }
+                        role={!isPrintClone ? 'link' : undefined}
+                        tabIndex={!isPrintClone ? 0 : undefined}
+                        onKeyDown={
+                          !isPrintClone
+                            ? (e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  window.open(m.url, '_blank', 'noopener,noreferrer');
+                                }
+                              }
+                            : undefined
+                        }
                         className={`rounded-md border p-2 flex flex-col items-center text-center justify-between gap-1.5 keep-all ${
+                          !isPrintClone ? 'cursor-pointer hover:border-slate-500 transition-colors' : ''
+                        } ${
                           inkSaver
                             ? 'border-slate-900 bg-white'
                             : 'border-slate-300 bg-slate-50/50'
@@ -793,6 +839,7 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
                             href={m.url}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             data-export-hide="true"
                             className="no-print inline-flex items-center gap-0.5 text-[8.8px] font-bold text-orange-700 hover:underline"
                           >

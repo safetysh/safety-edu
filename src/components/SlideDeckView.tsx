@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CustomSiteInfo, GeneratedMaterial } from '../types/safety';
 import { AccidentMechanismDiagram, HazardPictogram } from './SafetyVisuals';
+import { ScaledDocumentFrame } from './ScaledDocumentFrame';
 import {
   getCaseTranslations,
   getForeignLanguageNativeLabel,
@@ -910,25 +911,32 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
   };
 
   return (
-    <div className="w-full max-w-[960px] mx-auto space-y-4">
-      <div className="relative flex items-center gap-3">
+    <div className="w-full max-w-[960px] mx-auto space-y-3 sm:space-y-4">
+      <div className="relative flex items-center gap-1.5 sm:gap-3">
         <button
           type="button"
           onClick={() => onChangeSlide(Math.max(0, activeSlide - 1))}
           disabled={activeSlide === 0}
           aria-label="이전 슬라이드"
-          className="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+          className="hidden sm:flex shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-35 disabled:cursor-not-allowed items-center justify-center transition-colors cursor-pointer"
         >
           <ChevronLeft className="w-5 h-5" />
         </button>
 
         <div className="flex-1 min-w-0">
-          <div
-            ref={slideRef}
-            className="w-full aspect-video ops-sheet-shadow rounded-sm border border-slate-300 overflow-hidden bg-white"
+          <ScaledDocumentFrame
+            naturalWidth={860}
+            naturalHeight={484}
+            zoomMode="fit"
+            recalcTrigger={activeSlide}
           >
-            {renderCurrentSlide()}
-          </div>
+            <div
+              ref={slideRef}
+              className="w-[860px] h-[484px] ops-sheet-shadow rounded-sm border border-slate-300 overflow-hidden bg-white"
+            >
+              {renderCurrentSlide()}
+            </div>
+          </ScaledDocumentFrame>
         </div>
 
         <button
@@ -936,14 +944,39 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
           onClick={() => onChangeSlide(Math.min(4, activeSlide + 1))}
           disabled={activeSlide === 4}
           aria-label="다음 슬라이드"
-          className="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+          className="hidden sm:flex shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-35 disabled:cursor-not-allowed items-center justify-center transition-colors cursor-pointer"
         >
           <ChevronRight className="w-5 h-5" />
         </button>
       </div>
 
+      {/* Mobile Prev/Next Strip */}
+      <div className="flex sm:hidden items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => onChangeSlide(Math.max(0, activeSlide - 1))}
+          disabled={activeSlide === 0}
+          className="min-h-[44px] px-3 rounded-lg border border-slate-300 bg-white text-slate-800 text-[12.5px] font-bold disabled:opacity-40 inline-flex items-center gap-1 cursor-pointer"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>이전</span>
+        </button>
+        <span className="text-[12.5px] font-extrabold text-slate-700 tabular-nums">
+          슬라이드 {activeSlide + 1} / 5
+        </span>
+        <button
+          type="button"
+          onClick={() => onChangeSlide(Math.min(4, activeSlide + 1))}
+          disabled={activeSlide === 4}
+          className="min-h-[44px] px-3 rounded-lg border border-slate-300 bg-white text-slate-800 text-[12.5px] font-bold disabled:opacity-40 inline-flex items-center gap-1 cursor-pointer"
+        >
+          <span>다음</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
       {/* Bottom 5-Slide Thumbnail Strip */}
-      <div className="grid grid-cols-5 gap-2.5 px-13">
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-2.5 px-0 sm:px-13">
         {SLIDE_META.map((meta, idx) => {
           const isActive = idx === activeSlide;
           return (
@@ -951,14 +984,14 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
               key={meta.num}
               type="button"
               onClick={() => onChangeSlide(idx)}
-              className={`group text-left rounded-md border p-2 transition-all cursor-pointer ${
+              className={`group text-left rounded-md border p-1.5 sm:p-2 transition-all cursor-pointer ${
                 isActive
                   ? 'bg-white border-slate-900 ring-2 ring-slate-900/15'
                   : 'bg-white/80 border-slate-200 hover:border-slate-400'
               }`}
             >
               <div
-                className="w-full aspect-video rounded-[3px] mb-1.5 overflow-hidden border border-slate-200 flex flex-col"
+                className="w-full aspect-video rounded-[3px] mb-1 sm:mb-1.5 overflow-hidden border border-slate-200 flex flex-col"
                 style={{
                   backgroundColor: idx === 0 && !inkSaver ? '#0F172A' : '#FFFFFF',
                 }}
@@ -970,7 +1003,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                 {idx > 0 && (
                   <div className="h-[2px] w-full" style={{ backgroundColor: accentHex }} />
                 )}
-                <div className="flex-1 p-1.5 flex flex-col justify-between">
+                <div className="flex-1 p-1 sm:p-1.5 flex flex-col justify-between">
                   <div
                     className={`h-1.5 w-3/4 rounded-[1px] ${
                       idx === 0 && !inkSaver ? 'bg-white/75' : 'bg-slate-300'
@@ -978,12 +1011,12 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                   />
                   <div className="grid grid-cols-2 gap-1">
                     <div
-                      className={`h-3 rounded-[1px] ${
+                      className={`h-2.5 sm:h-3 rounded-[1px] ${
                         idx === 0 && !inkSaver ? 'bg-slate-700' : 'bg-slate-100'
                       }`}
                     />
                     <div
-                      className="h-3 rounded-[1px]"
+                      className="h-2.5 sm:h-3 rounded-[1px]"
                       style={{
                         backgroundColor: idx === 0 && !inkSaver ? '#1E293B' : theme.softBgHex,
                       }}
@@ -992,10 +1025,12 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                 </div>
               </div>
               <div className="flex items-center justify-between gap-1">
-                <span className="text-[11px] font-bold text-slate-900 tabular-nums">
+                <span className="text-[10.5px] sm:text-[11px] font-bold text-slate-900 tabular-nums">
                   {meta.num}장
                 </span>
-                <span className="text-[10.5px] text-slate-600 truncate">{meta.title}</span>
+                <span className="hidden sm:inline text-[10.5px] text-slate-600 truncate">
+                  {meta.title}
+                </span>
               </div>
             </button>
           );

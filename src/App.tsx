@@ -11,6 +11,14 @@ import {
   X,
   RotateCcw,
   BookOpen,
+  Share2,
+  SlidersHorizontal,
+  Eye,
+  Pencil,
+  Maximize2,
+  Minimize2,
+  Lock,
+  FileText,
 } from 'lucide-react';
 import { SEED_ACCIDENT_CASES } from './data/seedCases';
 import {
@@ -56,17 +64,26 @@ import { OpsReferenceSheetView } from './components/OpsReferenceSheetView';
 import { LegalReferenceDrawer } from './components/LegalReferenceDrawer';
 import { SlideDeckView } from './components/SlideDeckView';
 import { CardNewsView } from './components/CardNewsView';
+import { ScaledDocumentFrame } from './components/ScaledDocumentFrame';
+import { MobileEditSheet } from './components/MobileEditSheet';
+import { ImageShareFallbackModal } from './components/ImageShareFallbackModal';
 import {
+  CapturedPngAsset,
+  captureNodeAsPngResult,
   copyNodeAsPngToClipboard,
   downloadNodeAsPng,
   downloadSampleCaseTemplate,
+  isInAppBrowser,
   normalizeLogoFileToDataUrl,
 } from './utils/exportImage';
 import { getForeignLanguageNativeLabel } from './data/multilingualDict';
 import { SEASONAL_RISKS } from './data/seasonalRisks';
 import {
   formatSourceHeaderBadge,
+  getCaseOverviewVerbatim,
+  getDisplaySourceRef,
   getSourceBrandStyle,
+  isOfficialKoshaApiCase,
   isStandardModelCase,
 } from './utils/textFit';
 
@@ -108,6 +125,24 @@ export default function App() {
   const [activeSlide, setActiveSlide] = useState<number>(0);
   const [showKytAnswers, setShowKytAnswers] = useState<boolean>(true);
 
+  // Mobile/Tablet (<1024px) responsive UX state (strictly isolated from >=1024px desktop)
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1024 : false
+  );
+  const [mobileTab, setMobileTab] = useState<'settings' | 'preview'>('preview');
+  const [mobileOpsPage, setMobileOpsPage] = useState<'page1' | 'page2'>('page1');
+  const [mobileZoomMode, setMobileZoomMode] = useState<'fit' | 'actual'>('fit');
+  const [mobileEditSheet, setMobileEditSheet] = useState<{
+    open: boolean;
+    tab: 'measures' | 'tbm';
+  }>({ open: false, tab: 'measures' });
+  const [fullOverviewModalOpen, setFullOverviewModalOpen] = useState<boolean>(false);
+  const [fallbackImageState, setFallbackImageState] = useState<{
+    asset: CapturedPngAsset;
+    label: string;
+  } | null>(null);
+  const [isSharingImage, setIsSharingImage] = useState<boolean>(false);
+
   const [siteInfo, setSiteInfo] = useState<CustomSiteInfo>(() =>
     loadPersistedSitePrefs(getTodayDateString())
   );
@@ -120,8 +155,24 @@ export default function App() {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const opsSheetRef = useRef<HTMLDivElement | null>(null);
+  const appendixSheetRef = useRef<HTMLDivElement | null>(null);
   const activeSlideRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const sync = () => setIsMobileViewport(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  useEffect(() => {
+    if (!siteInfo.showPage2Appendix && mobileOpsPage === 'page2') {
+      setMobileOpsPage('page1');
+    }
+  }, [siteInfo.showPage2Appendix, mobileOpsPage]);
 
   const initialGen = useMemo(
     () =>
@@ -141,7 +192,7 @@ export default function App() {
   const [material, setMaterial] = useState<GeneratedMaterial>(initialGen.material);
   const [history, setHistory] = useState<GenerationHistoryState>(initialGen.nextHistory);
 
-  // Auto-persist site preferences & presets to localStorage
+  // Auto-persist site preferences & presets to localStorage (with QuotaExceeded fallback)
   useEffect(() => {
     savePersistedSitePrefs(siteInfo);
   }, [siteInfo]);
@@ -709,13 +760,13 @@ export default function App() {
       showToast('error', 'PNG, JPG, SVG, WebP 형식의 이미지 파일만 로고로 업로드할 수 있습니다.');
       return;
     }
-    if (file.size > 3 * 1024 * 1024) {
-      showToast('error', '로고 이미지는 3MB 이하 파일로 업로드해 주세요.');
+    if (file.size > 15 * 1024 * 1024) {
+      showToast('error', '로고 이미지는 15MB 이하 파일로 업로드해 주세요.');
       return;
     }
 
     try {
-      const { dataUrl, convertedToPng } = await normalizeLogoFileToDataUrl(file);
+      const { dataUrl, convertedToPng, compressed } = await normalizeLogoFileToDataUrl(file, 400);
       setSiteInfo((prev) => ({
         ...prev,
         logoDataUrl: dataUrl,
@@ -724,8 +775,10 @@ export default function App() {
       showToast(
         'success',
         convertedToPng
-          ? `현장 로고(${file.name})를 투명 PNG로 변환하여 PPTX·포스터에 적용·자동저장했습니다.`
-          : `현장 로고(${file.name})가 적용 및 자동저장되었습니다.`
+          ? `현장 로고(${file.name})를 투명 PNG로 최적화·자동저장했습니다.`
+          : compressed
+            ? `현장 로고(${file.name})를 모바일·인쇄 규격(400px 이하)으로 자동 압축해 저장했습니다.`
+            : `현장 로고(${file.name})가 적용 및 자동저장되었습니다.`
       );
     } catch {
       showToast('error', '로고 이미지를 읽거나 변환하는 중 오류가 발생했습니다.');
@@ -804,32 +857,134 @@ export default function App() {
     }
   };
 
-  const handleExportPng = async () => {
+  const getActiveCaptureTarget = (preferMobilePage: boolean): {
+    node: HTMLElement | null;
+    prefix: string;
+    targetPixelWidth: number;
+    label: string;
+  } => {
+    if (outputFormat === 'ops') {
+      const usePage2 =
+        preferMobilePage &&
+        mobileOpsPage === 'page2' &&
+        siteInfo.showPage2Appendix &&
+        Boolean(resolvedLegalRef) &&
+        Boolean(appendixSheetRef.current);
+
+      if (usePage2) {
+        return {
+          node: appendixSheetRef.current,
+          prefix: `안전교육OPS_2면참고별지_${effectiveMaterial.selectedWorkType}`,
+          targetPixelWidth: 1600,
+          label: 'A4 2면 참고 별지 (고해상도 PNG)',
+        };
+      }
+      return {
+        node: opsSheetRef.current,
+        prefix: `OPS_${effectiveMaterial.selectedWorkType}`,
+        targetPixelWidth: 1588,
+        label: 'A4 1면 안전교육 OPS (고해상도 PNG)',
+      };
+    }
+
+    return {
+      node: activeSlideRef.current,
+      prefix: `슬라이드${activeSlide + 1}_${effectiveMaterial.selectedWorkType}`,
+      targetPixelWidth: 1920,
+      label: `교육용 슬라이드 ${activeSlide + 1}장 (고해상도 PNG)`,
+    };
+  };
+
+  const handleOpenImageFallback = useCallback((asset: CapturedPngAsset, label: string) => {
+    setFallbackImageState({ asset, label });
+  }, []);
+
+  const handleExportPng = async (fromMobileBar = false) => {
     if (isExportingPng) return;
-    const targetNode = outputFormat === 'ops' ? opsSheetRef.current : activeSlideRef.current;
-    if (!targetNode) {
+    if (outputFormat === 'cardnews') {
+      setMobileTab('preview');
+      showToast('success', '카드뉴스 화면에서 개별 카드 저장 또는 4장 ZIP 다운로드를 이용해 주세요.');
+      return;
+    }
+
+    const { node, prefix, targetPixelWidth, label } = getActiveCaptureTarget(
+      fromMobileBar || isMobileViewport
+    );
+    if (!node) {
       showToast('error', '이미지 저장 대상을 찾을 수 없습니다.');
       return;
     }
 
     setIsExportingPng(true);
     try {
-      const prefix =
-        outputFormat === 'ops'
-          ? `OPS_${effectiveMaterial.selectedWorkType}`
-          : `슬라이드${activeSlide + 1}_${effectiveMaterial.selectedWorkType}`;
-      const targetPixelWidth = outputFormat === 'ops' ? 1588 : 1920;
-      const fileName = await downloadNodeAsPng(
-        targetNode,
-        prefix,
-        siteInfo.educationDate || getTodayDateString(),
-        targetPixelWidth
-      );
+      const dateStr = siteInfo.educationDate || getTodayDateString();
+      // In KakaoTalk / Naver in-app browsers, direct blob/data downloads are frequently blocked
+      if ((fromMobileBar || isMobileViewport) && isInAppBrowser()) {
+        const asset = await captureNodeAsPngResult(node, prefix, dateStr, targetPixelWidth);
+        setFallbackImageState({ asset, label });
+        return;
+      }
+
+      const fileName = await downloadNodeAsPng(node, prefix, dateStr, targetPixelWidth);
       showToast('success', `고해상도 PNG 이미지가 저장되었습니다: ${fileName}`);
     } catch {
       showToast('error', 'PNG 이미지 변환 중 오류가 발생했습니다.');
     } finally {
       setIsExportingPng(false);
+    }
+  };
+
+  const handleShareMobileImage = async () => {
+    if (isSharingImage || isExportingPng) return;
+    if (outputFormat === 'cardnews') {
+      setMobileTab('preview');
+      showToast('success', '카드뉴스 미리보기에서 개별 카드 이미지를 복사·저장해 공유해 주세요.');
+      return;
+    }
+
+    const { node, prefix, targetPixelWidth, label } = getActiveCaptureTarget(true);
+    if (!node) {
+      showToast('error', '공유할 교육자료 이미지를 찾을 수 없습니다.');
+      return;
+    }
+
+    setIsSharingImage(true);
+    try {
+      const dateStr = siteInfo.educationDate || getTodayDateString();
+      const asset = await captureNodeAsPngResult(node, prefix, dateStr, targetPixelWidth);
+
+      // In KakaoTalk/Naver in-app browsers, show long-press save + fresh-gesture share modal directly
+      if (isInAppBrowser()) {
+        setFallbackImageState({ asset, label });
+        return;
+      }
+
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        const shareData: ShareData = {
+          title: `${effectiveMaterial.selectedWorkType} 안전교육자료`,
+          files: [asset.file],
+        };
+        const canShareFiles =
+          typeof navigator.canShare !== 'function' || navigator.canShare(shareData);
+        if (canShareFiles) {
+          try {
+            await navigator.share(shareData);
+            showToast('success', '교육자료 이미지 공유를 완료했습니다.');
+            return;
+          } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') {
+              return;
+            }
+            // Fall through to high-res preview modal (handles iOS Safari NotAllowedError gesture expiry)
+          }
+        }
+      }
+
+      setFallbackImageState({ asset, label });
+    } catch {
+      showToast('error', '공유용 이미지 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsSharingImage(false);
     }
   };
 
@@ -890,10 +1045,20 @@ export default function App() {
         ? `슬라이드 ${activeSlide + 1}/5`
         : '4컷 카드뉴스 (1:1)';
 
+  const anyMobileOverlayOpen =
+    mobileEditSheet.open ||
+    legalDrawerOpen ||
+    Boolean(fallbackImageState) ||
+    fullOverviewModalOpen;
+
+  const showPage2 = siteInfo.showPage2Appendix && Boolean(resolvedLegalRef);
+  const mobileActivePage2 = isMobileViewport && outputFormat === 'ops' && showPage2 && mobileOpsPage === 'page2';
+  const isOfficialPrimary = isOfficialKoshaApiCase(effectiveMaterial.primaryCase);
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-900">
-      {/* Top Bar: Institutional Safety Action Header */}
-      <header className="no-print sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 px-4 lg:px-6 h-14 flex items-center justify-between gap-4">
+      {/* Desktop Top Bar (>=1024px): 100% preserved */}
+      <header className="no-print hidden lg:flex sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 px-6 h-14 items-center justify-between gap-4">
         <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
           <ShieldCheck className="w-5 h-5 text-orange-400 shrink-0" />
           <span className="text-[15px] font-bold tracking-tight">
@@ -915,7 +1080,7 @@ export default function App() {
           <span className="text-slate-300 whitespace-nowrap">{formatBreadcrumbLabel}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={handleExportPptx}
@@ -949,7 +1114,7 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={handleExportPng}
+                onClick={() => handleExportPng(false)}
                 disabled={isExportingPng}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-60 text-slate-100 text-[12px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
@@ -974,9 +1139,98 @@ export default function App() {
         </div>
       </header>
 
+      {/* Mobile/Tablet Slim Single-Row Header (<1024px, <= 48px) */}
+      <header className="no-print flex lg:hidden sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 px-3 h-12 items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <ShieldCheck className="w-4.5 h-4.5 text-orange-400 shrink-0" />
+          <span className="text-[14px] font-extrabold tracking-tight truncate">
+            산업안전 교육자료 제작기
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={handlePrintPdf}
+          aria-label="A4 인쇄"
+          className="min-h-[36px] px-2.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 text-[12px] font-bold inline-flex items-center gap-1 shrink-0 whitespace-nowrap cursor-pointer"
+        >
+          <Printer className="w-3.5 h-3.5 shrink-0" />
+          <span>인쇄</span>
+        </button>
+      </header>
+
+      {/* Mobile/Tablet Fixed 2-Tab Switcher (<1024px) */}
+      <nav
+        aria-label="모바일 작업 탭"
+        className="no-print lg:hidden sticky top-12 z-20 bg-white border-b border-slate-200 px-3 py-1.5 shadow-2xs"
+      >
+        <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setMobileTab('settings')}
+            className={`min-h-[44px] rounded-lg text-[13px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              mobileTab === 'settings'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4 shrink-0" />
+            <span>설정 · 사례 선택</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileTab('preview')}
+            className={`min-h-[44px] rounded-lg text-[13px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              mobileTab === 'preview'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600'
+            }`}
+          >
+            <Eye className="w-4 h-4 shrink-0" />
+            <span>A4 미리보기 · 편집</span>
+            {effectiveMaterial.isCustomEdited && (
+              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </nav>
+
+      {/* Mobile Toast Notification (visible on both Settings & Preview tabs) */}
+      {toast && (
+        <div
+          role="status"
+          className={`no-print lg:hidden mx-3 mt-2.5 px-3.5 py-2.5 rounded-lg border text-[12px] font-semibold flex items-center justify-between gap-2.5 ${
+            toast.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-red-50 border-red-200 text-red-900'
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            )}
+            <span className="keep-all">{toast.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label="알림 닫기"
+            className="min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-500 shrink-0 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Main Split Workspace */}
       <div className="no-print flex-1 flex flex-col lg:flex-row min-h-0">
         <ControlSidebar
+          className={
+            mobileTab === 'settings'
+              ? 'flex lg:flex pb-24 lg:pb-0'
+              : 'hidden lg:flex'
+          }
           industry={industry}
           workType={workType}
           sourceFilter={sourceFilter}
@@ -1010,9 +1264,21 @@ export default function App() {
           onDownloadSampleJson={downloadSampleCaseTemplate}
         />
 
-        <main className="flex-1 min-w-0 flex flex-col">
-          {/* Status & Attribution Metadata Bar */}
-          <div className="bg-white border-b border-slate-200 px-5 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        {/*
+          Keep <main> mounted & laid out (never display:none) while on Mobile Settings tab
+          so A4 opsSheetRef / appendixSheetRef preserve exact 794x1123 layout metrics for
+          zero-flicker instant PNG capture & sharing from any mobile tab.
+        */}
+        <main
+          aria-hidden={isMobileViewport && mobileTab === 'settings' ? true : undefined}
+          className={
+            isMobileViewport && mobileTab === 'settings'
+              ? 'fixed left-0 top-0 w-0 h-0 overflow-hidden pointer-events-none -z-10'
+              : 'flex-1 min-w-0 flex flex-col pb-24 lg:pb-0'
+          }
+        >
+          {/* Desktop Status & Attribution Metadata Bar (>=1024px) */}
+          <div className="hidden lg:flex bg-white border-b border-slate-200 px-8 py-2.5 flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.8px] text-slate-700 tabular-nums">
               <span
                 className="px-2 py-0.5 rounded-sm text-[10.8px] font-extrabold text-white"
@@ -1089,11 +1355,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Inline Notification Toast */}
+          {/* Desktop Inline Notification Toast (>=1024px) */}
           {toast && (
             <div
               role="status"
-              className={`mx-5 lg:mx-8 mt-3 px-4 py-2.5 rounded-lg border text-[12.5px] font-semibold flex items-center justify-between gap-3 ${
+              className={`hidden lg:flex mx-8 mt-3 px-4 py-2.5 rounded-lg border text-[12.5px] font-semibold items-center justify-between gap-3 ${
                 toast.type === 'success'
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                   : 'bg-red-50 border-red-200 text-red-900'
@@ -1118,29 +1384,152 @@ export default function App() {
             </div>
           )}
 
+          {/* Mobile/Tablet Non-Sticky Preview Controls (<1024px) */}
+          <div className="lg:hidden px-3 pt-2.5 pb-1 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                <span
+                  className="px-2 py-0.5 rounded-sm text-[10.5px] font-extrabold text-white shrink-0"
+                  style={{ backgroundColor: sourceBrand.primaryHex }}
+                >
+                  {sourceBrand.shortLabel}
+                </span>
+                <span className="text-[12px] font-bold text-slate-800 truncate">
+                  {industry} · {workType}
+                </span>
+              </div>
+              {effectiveMaterial.isCustomEdited && (
+                <button
+                  type="button"
+                  onClick={handleResetAllEditsForCurrentCase}
+                  className="min-h-[34px] px-2 rounded-md bg-amber-100 border border-amber-300 text-amber-950 text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>{isOfficialPrimary ? '공단 원문 복원' : '표준 복원'}</span>
+                </button>
+              )}
+            </div>
+
+            {outputFormat === 'ops' && (
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                {showPage2 ? (
+                  <div className="inline-flex items-center p-0.5 rounded-full bg-slate-200/90 border border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setMobileOpsPage('page1')}
+                      className={`min-h-[38px] px-3 rounded-full text-[12px] font-extrabold transition-all cursor-pointer ${
+                        mobileOpsPage === 'page1'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-700'
+                      }`}
+                    >
+                      1면 OPS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMobileOpsPage('page2')}
+                      className={`min-h-[38px] px-3 rounded-full text-[12px] font-extrabold transition-all cursor-pointer ${
+                        mobileOpsPage === 'page2'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-700'
+                      }`}
+                    >
+                      2면 참고 별지
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-[11.5px] font-bold text-slate-600">
+                    A4 한페이지 OPS (1면)
+                  </span>
+                )}
+
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMobileZoomMode((prev) => (prev === 'fit' ? 'actual' : 'fit'))
+                    }
+                    className="min-h-[40px] px-2.5 rounded-lg border border-slate-300 bg-white text-slate-800 text-[12px] font-bold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    {mobileZoomMode === 'fit' ? (
+                      <>
+                        <Maximize2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>100% 확대</span>
+                      </>
+                    ) : (
+                      <>
+                        <Minimize2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>화면 맞춤</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMobileEditSheet({ open: true, tab: 'measures' })}
+                    className="min-h-[40px] px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[12px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                    <span>대책·TBM 편집</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Document Viewport */}
-          <div className="flex-1 overflow-auto p-5 lg:p-7 flex flex-col items-center">
+          <div className="flex-1 overflow-y-auto px-3 py-2.5 lg:p-7 flex flex-col items-center">
             {outputFormat === 'ops' ? (
-              <div className="w-full flex flex-col items-center gap-6 overflow-x-auto pb-6">
-                <OpsSheetView
-                  material={effectiveMaterial}
-                  siteInfo={siteInfo}
-                  legalRef={resolvedLegalRef}
-                  showKytAnswers={showKytAnswers}
-                  onToggleKytAnswers={handleToggleKytAnswers}
-                  onUpdateMeasures={handleUpdateMeasures}
-                  onResetMeasures={handleResetMeasures}
-                  onUpdateTbm={handleUpdateTbm}
-                  onResetTbm={handleResetTbm}
-                  sheetRef={opsSheetRef}
-                />
-                {siteInfo.showPage2Appendix && resolvedLegalRef && (
-                  <OpsReferenceSheetView
-                    material={effectiveMaterial}
-                    siteInfo={siteInfo}
-                    legalRef={resolvedLegalRef}
-                    onNotify={showToast}
-                  />
+              <div className="w-full flex flex-col items-center gap-4 lg:gap-6 pb-4 lg:pb-6">
+                <div className={mobileActivePage2 ? 'hidden lg:block w-full' : 'w-full'}>
+                  <ScaledDocumentFrame
+                    naturalWidth={794}
+                    naturalHeight={1123}
+                    zoomMode={isMobileViewport ? mobileZoomMode : 'fit'}
+                    recalcTrigger={`${mobileTab}-${mobileOpsPage}-${mobileZoomMode}-${effectiveMaterial.primaryCase.id}`}
+                  >
+                    <OpsSheetView
+                      material={effectiveMaterial}
+                      siteInfo={siteInfo}
+                      legalRef={resolvedLegalRef}
+                      showKytAnswers={showKytAnswers}
+                      onToggleKytAnswers={handleToggleKytAnswers}
+                      onUpdateMeasures={handleUpdateMeasures}
+                      onResetMeasures={handleResetMeasures}
+                      onUpdateTbm={handleUpdateTbm}
+                      onResetTbm={handleResetTbm}
+                      sheetRef={opsSheetRef}
+                      isMobileViewport={isMobileViewport}
+                      onRequestMobileEdit={(tab) => setMobileEditSheet({ open: true, tab })}
+                      onRequestFullOverviewModal={() => setFullOverviewModalOpen(true)}
+                    />
+                  </ScaledDocumentFrame>
+                </div>
+
+                {showPage2 && resolvedLegalRef && (
+                  <div
+                    className={
+                      isMobileViewport && mobileOpsPage !== 'page2'
+                        ? 'hidden lg:block w-full'
+                        : 'w-full'
+                    }
+                  >
+                    <ScaledDocumentFrame
+                      naturalWidth={794}
+                      naturalHeight={1123}
+                      zoomMode={isMobileViewport ? mobileZoomMode : 'fit'}
+                      recalcTrigger={`${mobileTab}-${mobileOpsPage}-${mobileZoomMode}-${effectiveMaterial.primaryCase.id}-${siteInfo.showPage2Appendix}`}
+                    >
+                      <OpsReferenceSheetView
+                        material={effectiveMaterial}
+                        siteInfo={siteInfo}
+                        legalRef={resolvedLegalRef}
+                        sheetRef={appendixSheetRef}
+                        onNotify={showToast}
+                        onOpenImageFallback={handleOpenImageFallback}
+                      />
+                    </ScaledDocumentFrame>
+                  </div>
                 )}
               </div>
             ) : outputFormat === 'slides' ? (
@@ -1168,6 +1557,68 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      {/* Mobile/Tablet Fixed Bottom Action Bar (<1024px, hidden when bottom sheet/drawer/modal is open) */}
+      {!anyMobileOverlayOpen && (
+        <div
+          data-export-hide="true"
+          className="no-print lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-xs border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.08)]"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
+            <button
+              type="button"
+              onClick={() => handleExportPng(true)}
+              disabled={isExportingPng || isSharingImage}
+              className="min-h-[50px] rounded-xl bg-slate-100 active:bg-slate-200 disabled:opacity-60 text-slate-900 flex flex-col items-center justify-center gap-0.5 text-[11px] font-extrabold cursor-pointer"
+            >
+              {isExportingPng ? (
+                <Loader2 className="w-4 h-4 animate-spin text-slate-800" />
+              ) : (
+                <ImageIcon className="w-4 h-4 text-slate-800" />
+              )}
+              <span>PNG 저장</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleShareMobileImage}
+              disabled={isSharingImage || isExportingPng}
+              className="min-h-[50px] rounded-xl bg-emerald-700 active:bg-emerald-800 disabled:opacity-60 text-white flex flex-col items-center justify-center gap-0.5 text-[11px] font-extrabold cursor-pointer"
+            >
+              {isSharingImage ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Share2 className="w-4 h-4" />
+              )}
+              <span>이미지 공유</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportPptx}
+              disabled={isExportingPptx}
+              className="min-h-[50px] rounded-xl bg-orange-600 active:bg-orange-700 disabled:opacity-60 text-white flex flex-col items-center justify-center gap-0.5 text-[11px] font-extrabold cursor-pointer"
+            >
+              {isExportingPptx ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>PPTX</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLegalDrawerOpen(true)}
+              className="min-h-[50px] rounded-xl bg-slate-900 active:bg-slate-800 text-white flex flex-col items-center justify-center gap-0.5 text-[11px] font-extrabold cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-orange-400" />
+              <span>법령·영상</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Dedicated A4 Print Container (1-page or 2-page with Reference Appendix) */}
       <div
@@ -1199,6 +1650,88 @@ export default function App() {
         legalRef={resolvedLegalRef}
         primaryCase={effectiveMaterial.primaryCase}
       />
+
+      {/* Mobile-only Safe Editing Bottom Sheet (Measures & TBM) */}
+      <MobileEditSheet
+        open={mobileEditSheet.open}
+        initialTab={mobileEditSheet.tab}
+        material={effectiveMaterial}
+        measurePresets={measurePresets}
+        onClose={() => setMobileEditSheet((prev) => ({ ...prev, open: false }))}
+        onUpdateMeasures={handleUpdateMeasures}
+        onResetMeasures={handleResetMeasures}
+        onUpdateTbm={handleUpdateTbm}
+        onResetTbm={handleResetTbm}
+        onResetAll={handleResetAllEditsForCurrentCase}
+        onAppendPresetMeasure={handleAppendPresetMeasure}
+      />
+
+      {/* Mobile & In-App Browser High-Res PNG Preview / Long-Press Save & Share Fallback Modal */}
+      <ImageShareFallbackModal
+        asset={fallbackImageState?.asset ?? null}
+        titleLabel={fallbackImageState?.label}
+        onClose={() => setFallbackImageState(null)}
+        onNotify={showToast}
+      />
+
+      {/* Mobile Readable Full Factual Overview Modal (Read-Only) */}
+      {fullOverviewModalOpen && (
+        <div
+          data-export-hide="true"
+          className="no-print fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/55 backdrop-blur-[1px] p-0 sm:p-4"
+          onClick={() => setFullOverviewModalOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="재해개요 전체 원문 보기"
+            className="w-full sm:max-w-[560px] max-h-[85dvh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden overscroll-contain"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="shrink-0 bg-slate-900 text-white px-4 py-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                {isOfficialPrimary ? (
+                  <Lock className="w-4 h-4 text-orange-400 shrink-0" />
+                ) : (
+                  <FileText className="w-4 h-4 text-slate-300 shrink-0" />
+                )}
+                <h2 className="text-[14.5px] font-extrabold truncate">
+                  재해개요 전체 원문 ({isOfficialPrimary ? '공단 공식 원문 · 수정 불가' : '표준 교육모델'})
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFullOverviewModalOpen(false)}
+                aria-label="원문 모달 닫기"
+                className="min-w-[44px] min-h-[44px] rounded-lg text-slate-300 hover:text-white flex items-center justify-center shrink-0 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div
+              className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-3 keep-all"
+              style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+            >
+              <p className="text-[15.5px] font-medium text-slate-900 leading-relaxed whitespace-pre-line">
+                {getCaseOverviewVerbatim(effectiveMaterial.primaryCase)}
+              </p>
+              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-[12px] text-slate-600 space-y-1">
+                <p>
+                  <strong className="text-slate-800">기인물:</strong> {effectiveMaterial.primaryCase.equipment}
+                </p>
+                {effectiveMaterial.primaryCase.occurred_date && (
+                  <p>
+                    <strong className="text-slate-800">발생일자:</strong> {effectiveMaterial.primaryCase.occurred_date}
+                  </p>
+                )}
+                <p>
+                  <strong className="text-slate-800">출처:</strong> {getDisplaySourceRef(effectiveMaterial.primaryCase)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

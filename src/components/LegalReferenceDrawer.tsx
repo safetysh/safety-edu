@@ -45,18 +45,18 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
   return (
     <div
       data-export-hide="true"
-      className="no-print fixed inset-0 z-50 flex justify-end bg-slate-950/45 backdrop-blur-[1px]"
+      className="no-print fixed inset-0 z-50 flex items-end lg:items-stretch justify-center lg:justify-end bg-slate-950/50 backdrop-blur-[1px]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="법령·지침·공단 미디어 참고 서랍"
-        className="w-full max-w-[620px] h-full bg-white shadow-2xl border-l border-slate-200 flex flex-col overflow-hidden"
+        className="w-full lg:max-w-[620px] h-[92dvh] lg:h-full rounded-t-2xl lg:rounded-none bg-white shadow-2xl border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col overflow-hidden overscroll-contain"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-slate-900 text-white px-5 py-4 flex items-start justify-between gap-3 shrink-0">
+        <div className="bg-slate-900 text-white px-4 lg:px-5 py-3.5 lg:py-4 flex items-start justify-between gap-3 shrink-0">
           <div className="min-w-0 space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="px-2 py-0.5 rounded-sm bg-orange-600 text-[10.5px] font-extrabold">
@@ -77,14 +77,14 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
             type="button"
             onClick={onClose}
             aria-label="참고 서랍 닫기"
-            className="p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer shrink-0"
+            className="min-w-[44px] min-h-[44px] lg:min-w-0 lg:min-h-0 p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Fixed 3-Tier Legal Hierarchy Notice */}
-        <div className="bg-amber-50 border-b border-amber-200 px-5 py-2.5 text-[11.2px] text-amber-950 font-semibold leading-snug keep-all shrink-0 flex items-start gap-2">
+        <div className="bg-amber-50 border-b border-amber-200 px-4 lg:px-5 py-2.5 text-[11.2px] text-amber-950 font-semibold leading-snug keep-all shrink-0 flex items-start gap-2">
           <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
           <span>
             {legalRef?.hierarchyNotice ||
@@ -93,18 +93,18 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
         </div>
 
         {/* Tabs */}
-        <div className="grid grid-cols-3 border-b border-slate-200 bg-slate-50 px-3 pt-2 gap-1 shrink-0">
+        <div className="grid grid-cols-3 border-b border-slate-200 bg-slate-50 px-2.5 lg:px-3 pt-2 gap-1 shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('laws')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-t-lg text-[12px] font-bold transition-colors cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 lg:gap-1.5 py-2 px-1.5 lg:px-2 rounded-t-lg text-[11.5px] lg:text-[12px] font-bold transition-colors cursor-pointer ${
               activeTab === 'laws'
                 ? 'bg-white text-slate-950 border border-b-0 border-slate-200'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Scale className="w-3.5 h-3.5 shrink-0" />
-            <span>최신 법령 조문</span>
+            <span className="truncate">최신 법령</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 tabular-nums">
               {legalRef?.laws.length ?? 0}
             </span>
@@ -112,14 +112,14 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('guides')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-t-lg text-[12px] font-bold transition-colors cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 lg:gap-1.5 py-2 px-1.5 lg:px-2 rounded-t-lg text-[11.5px] lg:text-[12px] font-bold transition-colors cursor-pointer ${
               activeTab === 'guides'
                 ? 'bg-white text-slate-950 border border-b-0 border-slate-200'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <BookOpen className="w-3.5 h-3.5 shrink-0" />
-            <span>코샤가이드</span>
+            <span className="truncate">코샤가이드</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 tabular-nums">
               {legalRef?.guides.length ?? 0}
             </span>
@@ -127,14 +127,14 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('media')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-t-lg text-[12px] font-bold transition-colors cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 lg:gap-1.5 py-2 px-1.5 lg:px-2 rounded-t-lg text-[11.5px] lg:text-[12px] font-bold transition-colors cursor-pointer ${
               activeTab === 'media'
                 ? 'bg-white text-slate-950 border border-b-0 border-slate-200'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <PlayCircle className="w-3.5 h-3.5 shrink-0" />
-            <span>공단 영상·OPS</span>
+            <span className="truncate">영상·OPS</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 tabular-nums">
               {(legalRef?.qrMedia.length ?? 0) + (legalRef?.auxMedia.length ?? 0)}
             </span>
@@ -142,7 +142,10 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div
+          className="flex-1 overflow-y-auto overscroll-contain p-4 lg:p-5 space-y-4"
+          style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+        >
           {!legalRef ? (
             <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-[13px] text-slate-500 space-y-1">
               <p className="font-bold text-slate-700">법령·지침 참고 데이터를 불러오는 중입니다.</p>

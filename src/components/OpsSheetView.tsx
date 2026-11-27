@@ -55,6 +55,9 @@ interface OpsSheetViewProps {
   onResetTbm?: () => void;
   sheetRef?: React.RefObject<HTMLDivElement | null>;
   isPrintClone?: boolean;
+  isMobileViewport?: boolean;
+  onRequestMobileEdit?: (tab: 'measures' | 'tbm') => void;
+  onRequestFullOverviewModal?: () => void;
 }
 
 export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
@@ -69,6 +72,9 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   onResetTbm,
   sheetRef,
   isPrintClone = false,
+  isMobileViewport = false,
+  onRequestMobileEdit,
+  onRequestFullOverviewModal,
 }) => {
   const { primaryCase: c, relatedCase, theme, perspectiveMode, layoutStyle, isExactMatch } = material;
   const [expandFullOverview, setExpandFullOverview] = useState(false);
@@ -291,7 +297,13 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               <button
                 type="button"
                 data-export-hide="true"
-                onClick={() => setExpandFullOverview((p) => !p)}
+                onClick={() => {
+                  if (isMobileViewport && onRequestFullOverviewModal) {
+                    onRequestFullOverviewModal();
+                  } else {
+                    setExpandFullOverview((p) => !p);
+                  }
+                }}
                 className="no-print mt-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-700 hover:text-slate-950 underline underline-offset-2 cursor-pointer"
               >
                 {expandFullOverview ? (
@@ -665,7 +677,13 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                 {c.preventive_measures.length < 6 && (
                   <button
                     type="button"
-                    onClick={handleAddMeasure}
+                    onClick={() => {
+                      if (isMobileViewport && onRequestMobileEdit) {
+                        onRequestMobileEdit('measures');
+                      } else {
+                        handleAddMeasure();
+                      }
+                    }}
                     className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
                   >
                     <Plus className="w-2.5 h-2.5" />
@@ -691,7 +709,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
 
           <div className={`grid ${mCols} gap-1.5`}>
             {c.preventive_measures.map((measure, idx) => {
-              const isEditingThis = canInlineEdit && editingMeasureIdx === idx;
+              const isEditingThis = canInlineEdit && !isMobileViewport && editingMeasureIdx === idx;
               return (
                 <div
                   key={idx}
@@ -733,7 +751,12 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                     ) : (
                       <div
                         onClick={() => {
-                          if (canInlineEdit) setEditingMeasureIdx(idx);
+                          if (!canInlineEdit) return;
+                          if (isMobileViewport && onRequestMobileEdit) {
+                            onRequestMobileEdit('measures');
+                          } else {
+                            setEditingMeasureIdx(idx);
+                          }
                         }}
                         title={canInlineEdit ? '클릭하여 현장 여건에 맞게 수정·요약' : undefined}
                         className={canInlineEdit ? 'cursor-text hover:bg-slate-50 rounded -mx-0.5 px-0.5' : ''}
@@ -925,7 +948,13 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               {c.tbm_checklist.length < 7 && (
                 <button
                   type="button"
-                  onClick={handleAddTbm}
+                  onClick={() => {
+                    if (isMobileViewport && onRequestMobileEdit) {
+                      onRequestMobileEdit('tbm');
+                    } else {
+                      handleAddTbm();
+                    }
+                  }}
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
                 >
                   <Plus className="w-2.5 h-2.5" />
@@ -979,7 +1008,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
           </thead>
           <tbody className="divide-y divide-slate-200">
             {c.tbm_checklist.map((item, idx) => {
-              const isEditingRow = canInlineEdit && editingTbmIdx === idx;
+              const isEditingRow = canInlineEdit && !isMobileViewport && editingTbmIdx === idx;
               const compactRow = ultraDense || c.tbm_checklist.length >= 6;
               return (
                 <tr
@@ -1017,7 +1046,12 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                       <div className="flex items-center justify-between gap-1.5">
                         <span
                           onClick={() => {
-                            if (canInlineEdit) setEditingTbmIdx(idx);
+                            if (!canInlineEdit) return;
+                            if (isMobileViewport && onRequestMobileEdit) {
+                              onRequestMobileEdit('tbm');
+                            } else {
+                              setEditingTbmIdx(idx);
+                            }
                           }}
                           title={canInlineEdit ? '클릭하여 점검항목 수정' : undefined}
                           className={canInlineEdit ? 'cursor-text hover:underline decoration-dotted' : ''}

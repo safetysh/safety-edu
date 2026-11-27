@@ -99,6 +99,7 @@ interface ControlSidebarProps {
   onUploadLogoFile: (file: File) => void;
   onRemoveLogo: () => void;
   onDownloadSampleJson: () => void;
+  className?: string;
 }
 
 const INDUSTRIES: Array<{ id: IndustryType; label: string; icon: React.ReactNode }> = [
@@ -145,6 +146,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   onRemoveMeasurePreset,
   onUploadLogoFile,
   onRemoveLogo,
+  className = '',
 }) => {
   const [activeTab, setActiveTab] = useState<SidebarTabId>('basic');
   const [searchQuery, setSearchQuery] = useState('');
@@ -529,7 +531,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           value={siteInfo.siteName}
           onChange={(e) => onUpdateSiteInfo({ siteName: e.target.value })}
           placeholder="예: (주)대한건설 성수동 신축현장"
-          className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+          className="w-full rounded-md border border-slate-300 px-3 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
         />
       </div>
 
@@ -543,7 +545,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             type="date"
             value={siteInfo.educationDate}
             onChange={(e) => onUpdateSiteInfo({ educationDate: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[11.5px] text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-900"
+            className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[11.5px] text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-900"
           />
         </div>
         <div>
@@ -556,7 +558,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             value={siteInfo.instructorName}
             onChange={(e) => onUpdateSiteInfo({ instructorName: e.target.value })}
             placeholder="예: 김안전 과장"
-            className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+            className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
           />
         </div>
       </div>
@@ -564,7 +566,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
       {/* Company / Site Logo Upload */}
       <div className="space-y-1.5">
         <span className="block text-[11px] font-semibold text-slate-600">
-          회사·현장 로고 이미지 (PNG/JPG/SVG/WebP)
+          회사·현장 로고 이미지 (PNG/JPG/SVG/WebP · 자동 압축)
         </span>
         <input
           ref={logoInputRef}
@@ -589,7 +591,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               type="button"
               onClick={onRemoveLogo}
               aria-label="로고 삭제"
-              className="text-slate-500 hover:text-red-700 p-1 transition-colors cursor-pointer shrink-0"
+              className="min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center text-slate-500 hover:text-red-700 p-1 transition-colors cursor-pointer shrink-0"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -598,10 +600,10 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           <button
             type="button"
             onClick={() => logoInputRef.current?.click()}
-            className="w-full py-2 px-3 rounded-md border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="w-full min-h-[44px] lg:min-h-0 py-2 px-3 rounded-md border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <ImagePlus className="w-3.5 h-3.5 shrink-0" />
-            <span>로고 업로드 (SVG·WebP 자동 변환)</span>
+            <span>로고 업로드 (SVG·WebP·고화질 자동 압축)</span>
           </button>
         )}
       </div>
@@ -609,14 +611,16 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   );
 
   return (
-    <aside className="no-print w-full lg:w-[365px] xl:w-[390px] shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col">
+    <aside
+      className={`no-print w-full lg:w-[365px] xl:w-[390px] shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex-col ${className || 'flex'}`}
+    >
       {/* Top 3-Tab Navigation: 제작 설정 / 사례 검색 / 출력 옵션 */}
       <div className="shrink-0 px-3.5 pt-2.5 pb-2 border-b border-slate-200 bg-slate-50/80">
         <div className="grid grid-cols-3 gap-1 p-1 bg-slate-200/80 rounded-lg">
           <button
             type="button"
             onClick={() => setActiveTab('basic')}
-            className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'basic'
                 ? 'bg-white text-slate-950 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -628,7 +632,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('search')}
-            className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'search'
                 ? 'bg-white text-slate-950 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -643,7 +647,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('site')}
-            className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+            className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[12px] font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'site'
                 ? 'bg-white text-slate-950 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -684,7 +688,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                       key={item.id}
                       type="button"
                       onClick={() => onSelectIndustry(item.id)}
-                      className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-md text-[12px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                      className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1.5 py-2 px-2 rounded-md text-[12px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                         active
                           ? 'bg-slate-900 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -774,7 +778,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   id="work-type-select"
                   value={workType}
                   onChange={(e) => onSelectWorkType(e.target.value)}
-                  className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-9 text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
+                  className="w-full min-h-[44px] lg:min-h-0 appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-9 text-base lg:text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
                 >
                   {workTypes.map((wt) => (
                     <option key={wt} value={wt}>
@@ -793,7 +797,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeOutputFormat('ops')}
-                  className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                  className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                     outputFormat === 'ops'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -805,7 +809,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeOutputFormat('slides')}
-                  className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                  className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                     outputFormat === 'slides'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -817,7 +821,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeOutputFormat('cardnews')}
-                  className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                  className={`min-h-[44px] lg:min-h-0 flex items-center justify-center gap-1 py-2 px-1.5 rounded-md text-[11.5px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                     outputFormat === 'cardnews'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -839,7 +843,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   id="variation-select"
                   value={variationOption}
                   onChange={(e) => onChangeVariation(e.target.value as VariationOption)}
-                  className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pr-9 text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
+                  className="w-full min-h-[44px] lg:min-h-0 appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pr-9 text-base lg:text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
                 >
                   {VARIATION_CHOICES.map((opt) => (
                     <option key={opt.id} value={opt.id}>
@@ -881,7 +885,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             <button
               type="button"
               onClick={onRegenerate}
-              className="w-full py-2.5 px-4 rounded-lg bg-orange-600 hover:bg-orange-700 active:scale-[0.99] text-white font-bold text-[13px] flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+              className="w-full min-h-[46px] lg:min-h-0 py-2.5 px-4 rounded-lg bg-orange-600 hover:bg-orange-700 active:scale-[0.99] text-white font-bold text-[13px] flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap"
             >
               <RefreshCw className={`w-4 h-4 shrink-0 ${isShardLoading ? 'animate-spin' : ''}`} />
               <span>다른 사례로 새로운 교육자료 제작</span>
@@ -903,7 +907,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                       key={s.id}
                       type="button"
                       onClick={() => onUpdateSiteInfo({ seasonRisk: s.id as SeasonRiskId })}
-                      className={`py-1.5 px-1 rounded-md text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                      className={`min-h-[40px] lg:min-h-0 py-1.5 px-1 rounded-md text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                         active
                           ? 'bg-slate-900 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -961,7 +965,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   onChange={(e) =>
                     onUpdateSiteInfo({ foreignLanguage: e.target.value as ForeignLanguageCode })
                   }
-                  className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pr-9 text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
+                  className="w-full min-h-[44px] lg:min-h-0 appearance-none rounded-lg border border-slate-300 bg-white px-3 py-2 pr-9 text-base lg:text-[12.5px] font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
                 >
                   {FOREIGN_LANGUAGE_OPTIONS.map((opt) => (
                     <option key={opt.code} value={opt.code}>
@@ -1003,7 +1007,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="기인물·작업·지역 검색 (예: 크레인, 비계, 질식)"
-                  className="w-full rounded-lg border border-slate-300 bg-white pl-9 pr-8 py-2 text-[12.5px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full min-h-[44px] lg:min-h-0 rounded-lg border border-slate-300 bg-white pl-9 pr-8 py-2 text-base lg:text-[12.5px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                 />
                 {searchQuery && (
                   <button
@@ -1214,12 +1218,12 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     }
                   }}
                   placeholder="현장 고유 안전수칙 프리셋 등록..."
-                  className="flex-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-[11.5px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="flex-1 min-h-[44px] lg:min-h-0 rounded-md border border-slate-300 px-2.5 py-1.5 text-base lg:text-[11.5px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
                 />
                 <button
                   type="button"
                   onClick={handleSubmitNewPreset}
-                  className="shrink-0 px-2.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-900 text-white text-[11.5px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                  className="shrink-0 min-h-[44px] lg:min-h-0 px-3 lg:px-2.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-900 text-white text-[12px] lg:text-[11.5px] font-bold inline-flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>저장</span>
