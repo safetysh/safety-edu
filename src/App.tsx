@@ -87,6 +87,7 @@ import {
   getCaseOverviewVerbatim,
   getDisplaySourceRef,
   getSourceBrandStyle,
+  hasOfficialKoshaMeasures,
   isOfficialKoshaApiCase,
   isStandardModelCase,
 } from './utils/textFit';
@@ -766,7 +767,7 @@ export default function App() {
 
   const handleResetMeasures = useCallback(() => {
     const caseId = material.primaryCase.id;
-    const isStd = isStandardModelCase(material.primaryCase);
+    const hasOfficialMeasures = hasOfficialKoshaMeasures(material.primaryCase);
     setCaseEditsMap((prev) => {
       const current = prev[caseId];
       if (!current) return prev;
@@ -780,7 +781,9 @@ export default function App() {
     });
     showToast(
       'success',
-      isStd ? '예방대책을 표준 가이드로 복원했습니다.' : '예방대책을 공단 공식 원문으로 복원했습니다.'
+      hasOfficialMeasures
+        ? '예방대책을 공단 공식 원문으로 복원했습니다.'
+        : '예방대책을 기인물 표준 가이드로 복원했습니다.'
     );
   }, [material.primaryCase, showToast]);
 
@@ -800,7 +803,6 @@ export default function App() {
 
   const handleResetTbm = useCallback(() => {
     const caseId = material.primaryCase.id;
-    const isStd = isStandardModelCase(material.primaryCase);
     setCaseEditsMap((prev) => {
       const current = prev[caseId];
       if (!current) return prev;
@@ -812,15 +814,12 @@ export default function App() {
       }
       return next;
     });
-    showToast(
-      'success',
-      isStd ? 'TBM 점검표를 표준 가이드로 복원했습니다.' : 'TBM 점검표를 공단 원문 가이드로 복원했습니다.'
-    );
+    showToast('success', 'TBM 점검표를 기인물 표준 점검표로 복원했습니다.');
   }, [material.primaryCase, showToast]);
 
   const handleResetAllEditsForCurrentCase = () => {
     const caseId = material.primaryCase.id;
-    const isStd = isStandardModelCase(material.primaryCase);
+    const hasOfficialMeasures = hasOfficialKoshaMeasures(material.primaryCase);
     setCaseEditsMap((prev) => {
       const next = { ...prev };
       delete next[caseId];
@@ -828,9 +827,9 @@ export default function App() {
     });
     showToast(
       'success',
-      isStd
-        ? '대책 및 점검표를 모두 표준 가이드로 복원했습니다.'
-        : '대책 및 점검표를 모두 공단 원문으로 복원했습니다.'
+      hasOfficialMeasures
+        ? '대책 및 점검표를 모두 공단 원문·표준 기준으로 복원했습니다.'
+        : '대책 및 점검표를 모두 기인물 표준 가이드로 복원했습니다.'
     );
   };
 
@@ -1428,9 +1427,9 @@ export default function App() {
                 <>
                   <span className="text-slate-300" aria-hidden="true">·</span>
                   <span className="px-2 py-0.5 rounded bg-amber-100 border border-amber-300 text-amber-950 text-[10.8px] font-extrabold">
-                    {isStandardModelCase(effectiveMaterial.primaryCase)
-                      ? '표준 가이드 기반 · 현장 맞춤 반영'
-                      : '공단 권고안 기반 · 현장 맞춤 편집됨'}
+                    {hasOfficialKoshaMeasures(effectiveMaterial.primaryCase)
+                      ? '공단 권고안 기반 · 현장 맞춤 편집됨'
+                      : '표준 가이드 기반 · 현장 맞춤 반영'}
                   </span>
                   <button
                     type="button"
@@ -1439,9 +1438,9 @@ export default function App() {
                   >
                     <RotateCcw className="w-3 h-3" />
                     <span>
-                      {isStandardModelCase(effectiveMaterial.primaryCase)
-                        ? '표준 가이드 전체 복원'
-                        : '공단 원문 전체 복원'}
+                      {hasOfficialKoshaMeasures(effectiveMaterial.primaryCase)
+                        ? '공단 원문 전체 복원'
+                        : '표준 가이드 전체 복원'}
                     </span>
                   </button>
                 </>
@@ -1533,7 +1532,11 @@ export default function App() {
                   className="min-h-[34px] px-2 rounded-md bg-amber-100 border border-amber-300 text-amber-950 text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>{isOfficialPrimary ? '공단 원문 복원' : '표준 복원'}</span>
+                  <span>
+                    {hasOfficialKoshaMeasures(effectiveMaterial.primaryCase)
+                      ? '공단 원문 복원'
+                      : '표준 복원'}
+                  </span>
                 </button>
               )}
             </div>

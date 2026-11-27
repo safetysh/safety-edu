@@ -31,7 +31,10 @@ import {
   getCaseOverviewVerbatim,
   getCrossProcessSourceBadge,
   getDisplaySourceRef,
+  getMeasuresSourceCaption,
+  getResetMeasuresLabel,
   getSourceBrandStyle,
+  getTbmSourceCaption,
   isOfficialKoshaApiCase,
   splitSifBracketHighlights,
 } from '../utils/textFit';
@@ -94,15 +97,9 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
   const isOfficialKosha = isOfficialKoshaApiCase(c);
   const isMeasuresEdited = Boolean(material.isMeasuresEdited);
   const isTbmEdited = Boolean(material.isTbmEdited);
-  const measuresSourceLabel = isMeasuresEdited
-    ? isOfficialKosha
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : '표준 가이드 기반 · 현장 맞춤 반영'
-    : !isOfficialKosha
-      ? '표준 가이드'
-      : isSif
-        ? '공단 원문 (SIF 위험성감소대책)'
-        : '공단 원문 가이드';
+  const measuresSourceLabel = getMeasuresSourceCaption(c, isMeasuresEdited);
+  const tbmSourceLabel = getTbmSourceCaption(c, isTbmEdited);
+  const resetMeasuresLabel = getResetMeasuresLabel(c);
 
   const siteLabel = siteInfo.siteName.trim() || '________________';
   const dateLabel = siteInfo.educationDate || new Date().toISOString().slice(0, 10);
@@ -378,40 +375,60 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                 ? '02. SIF 고위험작업·재해유발요인 [공단 공식 원문]'
                 : '02. 핵심 위험요인 및 관리적 근본원인 분석'
           )}
-          <div className="flex-1 px-6 py-4 flex flex-col justify-center overflow-hidden">
+          <div className="flex-1 px-6 py-3 flex flex-col justify-center overflow-hidden">
             {showOxFocus ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
+                <div
+                  className="rounded-md border px-3 py-1.5 flex items-center gap-2 text-[11px] leading-snug keep-all"
+                  style={{
+                    backgroundColor: inkSaver ? '#F8FAFC' : sourceBrand.softBgHex,
+                    borderColor: inkSaver ? '#475569' : sourceBrand.borderHex,
+                  }}
+                >
+                  <span
+                    className="inline-flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded-sm text-[9.5px] font-extrabold text-white"
+                    style={{ backgroundColor: accentHex }}
+                  >
+                    <Lock className="w-2.5 h-2.5 shrink-0" />
+                    <span>{isSif ? 'SIF 유발요인 (원문)' : '발생원인 (원문 고정)'}</span>
+                  </span>
+                  <span className="text-slate-900 font-semibold truncate">
+                    {isSif
+                      ? `${c.high_risk_work || c.work_type} — ${c.hazard_factor || c.direct_causes[0]}`
+                      : c.direct_causes.filter(Boolean).slice(0, 2).join(' · ')}
+                  </span>
+                </div>
                 {c.ox_comparison.map((pair, idx) => (
                   <div key={idx} className="border border-slate-300 rounded-md overflow-hidden">
                     <div className="grid grid-cols-2 divide-x divide-slate-200">
-                      <div className={inkSaver ? 'bg-white p-3.5' : 'bg-red-50/80 p-3.5'}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="w-5 h-5 rounded-sm bg-red-700 text-white text-[11px] font-bold flex items-center justify-center">
+                      <div className={inkSaver ? 'bg-white p-2.5' : 'bg-red-50/80 p-2.5'}>
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="w-4.5 h-4.5 rounded-sm bg-red-700 text-white text-[10.5px] font-bold flex items-center justify-center">
                             X
                           </span>
-                          <span className="text-[11.5px] font-bold text-red-800">
+                          <span className="text-[11px] font-bold text-red-800">
                             잘못된 현장 관행 {idx + 1}
                           </span>
                         </div>
-                        <p className="text-[13px] font-bold text-slate-900 leading-snug keep-all">
+                        <p className="text-[12.2px] font-bold text-slate-900 leading-snug keep-all">
                           {pair.wrong}
                         </p>
                       </div>
-                      <div className={inkSaver ? 'bg-slate-50 p-3.5' : 'bg-emerald-50/80 p-3.5'}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="w-5 h-5 rounded-sm bg-emerald-700 text-white text-[11px] font-bold flex items-center justify-center">
+                      <div className={inkSaver ? 'bg-slate-50 p-2.5' : 'bg-emerald-50/80 p-2.5'}>
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="w-4.5 h-4.5 rounded-sm bg-emerald-700 text-white text-[10.5px] font-bold flex items-center justify-center">
                             O
                           </span>
-                          <span className="text-[11.5px] font-bold text-emerald-800">
+                          <span className="text-[11px] font-bold text-emerald-800">
                             반드시 지켜야 할 원칙 {idx + 1}
                           </span>
                         </div>
-                        <p className="text-[13px] font-bold text-slate-900 leading-snug keep-all">
+                        <p className="text-[12.2px] font-bold text-slate-900 leading-snug keep-all">
                           {pair.right}
                         </p>
                       </div>
                     </div>
-                    <div className="bg-slate-50 border-t border-slate-200 px-4 py-1.5 text-[11px] text-slate-700">
+                    <div className="bg-slate-50 border-t border-slate-200 px-3.5 py-1 text-[10.5px] text-slate-700">
                       <span className="font-bold text-slate-900">위험 해설:</span> {pair.note}
                     </div>
                   </div>
@@ -607,7 +624,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                         className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 font-bold text-orange-800 cursor-pointer"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>{isOfficialKosha ? '↺ 공단 원문 복원' : '↺ 표준 가이드 복원'}</span>
+                        <span>{resetMeasuresLabel}</span>
                       </button>
                     )}
                   </div>
@@ -742,17 +759,7 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
         <div className="flex-1 px-6 py-3.5 grid grid-cols-12 gap-4 overflow-hidden">
           <div className="col-span-7 rounded-md border border-slate-200 overflow-hidden flex flex-col">
             <div className="bg-slate-900 text-white px-4 py-2 flex items-center justify-between text-[11.5px] font-bold">
-              <span>
-                작업 전 5분 TBM 점검표 (
-                {isTbmEdited
-                  ? isOfficialKosha
-                    ? '공단 권고안 기반 · 현장 맞춤 반영'
-                    : '표준 가이드 기반 · 현장 맞춤 반영'
-                  : isOfficialKosha
-                    ? '공단 원문 가이드'
-                    : '표준 가이드'}
-                )
-              </span>
+              <span>작업 전 5분 TBM 점검표 ({tbmSourceLabel})</span>
               <div data-export-hide="true" className="no-print flex items-center gap-1.5">
                 {c.tbm_checklist.length < 7 && (
                   <button
@@ -865,7 +872,10 @@ export const SlideDeckView: React.FC<SlideDeckViewProps> = ({
                 </p>
                 {showKytAnswers ? (
                   <ul className="space-y-1 border-t pt-1.5" style={{ borderColor: theme.borderHex }}>
-                    {c.kyt_quiz.answers.map((ans, idx) => (
+                    {(c.preventive_measures.length > 0
+                      ? c.preventive_measures.slice(0, 3)
+                      : c.kyt_quiz.answers.slice(0, 3)
+                    ).map((ans, idx) => (
                       <li key={idx} className="text-[10.2px] text-slate-800 leading-snug font-medium">
                         <span className="font-bold mr-1" style={{ color: accentHex }}>
                           ✔ {idx + 1})

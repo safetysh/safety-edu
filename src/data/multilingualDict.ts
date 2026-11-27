@@ -592,7 +592,190 @@ const CASE_TRANSLATIONS: Record<string, Record<ActiveForeignLang, CaseTranslatio
 };
 
 /**
- * Fallback translations by HazardType for custom user-uploaded JSON cases.
+ * Equipment-specific 6-language translation packs (Zero API) so cargo vehicles,
+ * excavators, construction machinery, cranes, ladders, and forklifts never cross-contaminate
+ * in bilingual mode.
+ */
+const EQUIPMENT_FALLBACK_TRANSLATIONS: Record<
+  'cargo_vehicle' | 'excavator' | 'construction_machinery' | 'crane' | 'forklift' | 'ladder',
+  Record<ActiveForeignLang, CaseTranslationPack>
+> = {
+  cargo_vehicle: {
+    en: {
+      slogan: 'Stay out of blind spots! Use a spotter & wheel chocks every time!',
+      measures: [
+        'Physically separate truck/trailer lanes from walkways and block blind-spot entry.',
+        'Assign a dedicated spotter for reversing and right turns with unified hand signals.',
+        'Check backup cameras, reverse alarms, blind-spot mirrors, and brakes daily; obey speed limits.',
+        'Turn engine OFF, set parking brake, place wheel chocks, and verify cargo lashing before unloading.',
+      ],
+    },
+    vi: {
+      slogan: 'Cấm vào điểm mù khi lùi/rẽ phải! Luôn có người dẫn đường và chèn bánh!',
+      measures: [
+        'Tách biệt rõ đường xe tải/xe đầu kéo với lối đi bộ; cấm vào vùng điểm mù khi lùi và rẽ phải.',
+        'Bố trí người dẫn đường chuyên trách khi lùi/rẽ phải và thống nhất tín hiệu với tài xế.',
+        'Kiểm tra hàng ngày camera lùi, còi lùi, gương điểm mù, phanh và tuân thủ tốc độ quy định.',
+        'Khi dừng/bốc xếp phải tắt máy, kéo phanh tay, chèn bánh xe và kiểm tra dây chằng hàng.',
+      ],
+    },
+    zh: {
+      slogan: '严禁进入倒车与右转盲区！专人指挥、熄火垫好止轮木！',
+      measures: [
+        '物理隔离货车/挂车行驶装卸区与人行通道，严禁人员进入倒车及右转盲区。',
+        '倒车、右转及交叉路口必须配备专职指挥员，并与驾驶员统一指挥信号。',
+        '每日检查倒车影像、倒车警报、盲区镜及制动装置，严格遵守厂区限速慢行。',
+        '停车及货厢作业时必须熄火、拉紧手刹、垫好止轮木并确认货物捆扎牢固。',
+      ],
+    },
+    th: {
+      slogan: 'ห้ามเข้าจุดอับสายตาขณะถอย/เลี้ยวขวา! ต้องมีผู้ให้สัญญาณและหนุนล้อทุกครั้ง!',
+      measures: [
+        'แยกทางเดินรถบรรทุก/รถพ่วงออกจากทางเดินเท้าอย่างชัดเจน และห้ามเข้าจุดอับสายตาขณะถอยหรือเลี้ยว',
+        'จัดผู้ให้สัญญาณเฉพาะจุดขณะถอยหลังและเลี้ยวขวา พร้อมใช้สัญญาณมาตรฐานเดียวกัน',
+        'ตรวจกล้องถอยหลัง สัญญาณเสียงถอย กระจกจุดอับ และระบบเบรกทุกวัน พร้อมขับช้าตามกำหนด',
+        'เมื่อจอดหรือขนถ่ายต้องดับเครื่อง ดึงเบรกมือ วางหมอนหนุนล้อ และตรวจการรัดสินค้าให้แน่น',
+      ],
+    },
+    km: {
+      slogan: 'ហាមចូលតំបន់មើលមិនឃើញពេលថយ/បត់ស្តាំ! ត្រូវមានអ្នកផ្តល់សញ្ញា និងដាក់កំណល់កង់!',
+      measures: [
+        'បែងចែកផ្លូវឡានដឹកទំនិញ/រ៉ឺម៉កពីផ្លូវថ្មើរជើង និងហាមចូលតំបន់មើលមិនឃើញពេលថយ ឬបត់ស្តាំ។',
+        'ចាត់តាំងអ្នកផ្តល់សញ្ញាជំនាញពេលថយក្រោយ/បត់ស្តាំ និងប្រើសញ្ញាស្តង់ដារតែមួយជាមួយអ្នកបើកបរ។',
+        'ពិនិត្យកាមេរ៉ាថយ សំឡេងរោទិ៍ថយ កញ្ចក់មើលចំណុចងងឹត និងហ្វ្រាំងប្រចាំថ្ងៃ ព្រមទាំងបើកបរយឺតៗ។',
+        'ពេលឈប់ ឬលើកដាក់ទំនិញ ត្រូវពន្លត់ម៉ាស៊ីន ទាញហ្វ្រាំងដៃ ដាក់កំណល់កង់ និងពិនិត្យការចងទំនិញ។',
+      ],
+    },
+    uz: {
+      slogan: 'Orqaga yurish va o‘ngga burilish ko‘rinmas zonasiga kirmang! Yo‘naltiruvchi va tirgak shart!',
+      measures: [
+        'Yuk mashinasi/treyler yo‘lini piyodalar yo‘lidan ajrating va burilish/orqaga yurish ko‘rinmas zonasini yoping.',
+        'Orqaga yurish va o‘ngga burilishda maxsus yo‘naltiruvchi tayinlang va yagona signaldan foydalaning.',
+        'Orqa kamera, signal, ko‘rinmas zona oynasi va tormozni har kuni tekshiring; tezlikni oshirmang.',
+        'To‘xtash va yuklashda dvigatelni o‘chiring, qo‘l tormozini torting, g‘ildirak tirgagi va yuk bog‘ichini tekshiring.',
+      ],
+    },
+  },
+  excavator: {
+    en: {
+      slogan: 'Stay outside excavator swing radius! Lock quick-coupler safety pin!',
+      measures: [
+        'Prepare an excavator work plan, block entry inside swing radius, and assign a spotter.',
+        'Verify quick-coupler safety pin lock; never use the bucket for unauthorized lifting or riding.',
+        'Check ground stability before travel; keep safe distance from slopes and trench edges.',
+        'Lower bucket to ground, engage safety lever, and turn engine OFF before leaving the cab.',
+      ],
+    },
+    vi: {
+      slogan: 'Cấm vào bán kính quay máy xúc! Khóa chốt an toàn khớp nối nhanh!',
+      measures: [
+        'Lập kế hoạch làm việc máy xúc, cấm người vào bán kính quay và bố trí người cảnh giới.',
+        'Kiểm tra khóa chốt an toàn khớp nối nhanh; cấm dùng gầu để cẩu hàng sai mục đích hoặc chở người.',
+        'Kiểm tra độ vững nền đất trước khi di chuyển; giữ khoảng cách an toàn với mép hố đào và taluy.',
+        'Hạ gầu xuống đất, khóa cần an toàn và tắt máy hoàn toàn trước khi rời cabin.',
+      ],
+    },
+    zh: {
+      slogan: '严禁进入挖掘机回转半径！务必锁紧快换接头安全销！',
+      measures: [
+        '编制挖掘机作业方案，严禁人员进入回转作业半径并配备专职指挥员。',
+        '确认快换接头安全销锁止牢固，严禁使用铲斗违规吊物或载人。',
+        '行驶作业前核查地面承载力，与边坡及基坑边缘保持安全距离。',
+        '离机前必须将铲斗落地、锁定安全操作杆并彻底熄火。',
+      ],
+    },
+    th: {
+      slogan: 'ห้ามเข้าในรัศมีสวิงรถขุด! ล็อกสลักนิรภัยข้อต่อเร็วให้แน่นทุกครั้ง!',
+      measures: [
+        'จัดทำแผนงานรถขุด ห้ามคนเข้าในรัศมีสวิง และจัดผู้ให้สัญญาณเฝ้าระวังตลอดเวลา',
+        'ตรวจการล็อกสลักนิรภัยข้อต่อเร็ว ห้ามใช้บุ้งกี๋ยกของผิดประเภทหรือโดยสาร',
+        'ตรวจความแข็งแรงของพื้นดินก่อนเคลื่อนที่ และรักษาระยะห่างจากขอบบ่อและทางลาด',
+        'วางบุ้งกี๋ลงพื้น ล็อกคันโยกนิรภัย และดับเครื่องยนต์ทุกครั้งก่อนลงจากรถ',
+      ],
+    },
+    km: {
+      slogan: 'ហាមចូលក្នុងរង្វង់បង្វិលអេស្កាវ៉ាទ័រ! ត្រូវចាក់សោម្ជុលសុវត្ថិភាពឧបករណ៍ភ្ជាប់រហ័ស!',
+      measures: [
+        'រៀបចំផែនការការងារអេស្កាវ៉ាទ័រ ហាមចូលក្នុងរង្វង់បង្វិល និងមានអ្នកផ្តល់សញ្ញាប្រចាំការ។',
+        'ពិនិត្យការចាក់សោម្ជុលសុវត្ថិភាពឧបករណ៍ភ្ជាប់រហ័ស ហាមប្រើប៉ែលលើកសម្ភារៈខុសគោលដៅ ឬដឹកមនុស្ស។',
+        'ពិនិត្យភាពរឹងមាំនៃដីមុនផ្លាស់ទី និងរក្សាចម្ងាយសុវត្ថិភាពពីគែមរណ្តៅ និងជម្រាល។',
+        'ទម្លាក់ប៉ែលដល់ដី ចាក់សោដងសុវត្ថិភាព និងពន្លត់ម៉ាស៊ីនមុនចុះពីកាប៊ីន។',
+      ],
+    },
+    uz: {
+      slogan: 'Ekskavator aylanish zonasiga kirmang! Tez ulagich xavfsizlik shtiftini qulflang!',
+      measures: [
+        'Ekskavator ish rejasini tuzing, aylanish radiusiga kirishni taqiqlang va yo‘naltiruvchi qo‘ying.',
+        'Tez ulagich xavfsizlik shtiftini tekshiring; kovshni yuk ko‘tarish yoki odam tashishga ishlatmang.',
+        'Harakatdan oldin yer mustahkamligini tekshiring; chuqur cheti va qiyalikdan masofa saqlang.',
+        'Kabinadan tushishdan oldin kovshni yerga tushiring, xavfsizlik richagini qulflang va dvigatelni o‘chiring.',
+      ],
+    },
+  },
+  construction_machinery: {
+    en: {
+      slogan: 'Block machinery work zones! Use a spotter & shut engine OFF before inspection!',
+      measures: [
+        'Prepare a machinery work plan, prohibit worker entry in operating zones, and assign a spotter.',
+        'Verify ground compaction, outrigger deployment, parking brakes, and wheel chocks on slopes.',
+        'Inspect backup alarms, cameras, beacons, and hydraulic hoses daily before operation.',
+        'Stop engine, engage parking brake, and relieve pressure before any maintenance or leaving cab.',
+      ],
+    },
+    vi: {
+      slogan: 'Cấm vào vùng máy thi công hoạt động! Có người cảnh giới và tắt máy khi kiểm tra!',
+      measures: [
+        'Lập kế hoạch vận hành máy thi công, cấm người vào vùng hoạt động và bố trí người cảnh giới.',
+        'Kiểm tra độ chắc nền đất, chân chống lật, phanh đỗ và chèn bánh khi làm việc trên dốc.',
+        'Kiểm tra hàng ngày còi lùi, camera, đèn cảnh báo và hệ thống thủy lực trước khi vận hành.',
+        'Tắt máy, kéo phanh đỗ và xả áp suất trước khi bảo dưỡng hoặc rời khỏi buồng lái.',
+      ],
+    },
+    zh: {
+      slogan: '严禁进入施工机械作业区！专人指挥、停机熄火后再检修！',
+      measures: [
+        '编制施工机械作业计划，严禁人员进入作业半径并配备专职指挥员。',
+        '作业前确认地基承载力、支腿展开状态及坡道驻车制动与止轮木。',
+        '每日开工前检查倒车警报、影像、警示灯及液压制动系统。',
+        '检修或离机前必须停机熄火、拉紧驻车制动并释放残余压力。',
+      ],
+    },
+    th: {
+      slogan: 'ห้ามเข้าเขตการทำงานเครื่องจักรกลหนัก! มีผู้ให้สัญญาณและดับเครื่องก่อนตรวจซ่อม!',
+      measures: [
+        'จัดทำแผนงานเครื่องจักร ห้ามคนงานเข้าในรัศมีทำงาน และจัดผู้ให้สัญญาณเฉพาะ',
+        'ตรวจความแน่นของพื้นดิน ขาค้ำยัน เบรกจอด และหมอนหนุนล้อบนทางลาดชัน',
+        'ตรวจสัญญาณเสียงถอย กล้อง ไฟเตือน และระบบไฮดรอลิก/เบรกทุกวันก่อนใช้งาน',
+        'ดับเครื่องยนต์ ดึงเบรกจอด และระบายแรงดันก่อนซ่อมบำรุงหรือลงจากรถทุกครั้ง',
+      ],
+    },
+    km: {
+      slogan: 'ហាមចូលតំបន់គ្រឿងចក្រសំណង់! មានអ្នកផ្តល់សញ្ញា និងពន្លត់ម៉ាស៊ីនមុនពិនិត្យ!',
+      measures: [
+        'រៀបចំផែនការការងារគ្រឿងចក្រ ហាមចូលក្នុងតំបន់ប្រតិបត្តិការ និងមានអ្នកផ្តល់សញ្ញា។',
+        'ពិនិត្យភាពរឹងមាំនៃដី ជើងទ្រ ហ្វ្រាំងចត និងកំណល់កង់លើផ្លូវចំណោត។',
+        'ពិនិត្យសំឡេងរោទិ៍ថយ កាមេរ៉ា ភ្លើងសញ្ញា និងប្រព័ន្ធធារាសាស្ត្រប្រចាំថ្ងៃមុនប្រើប្រាស់។',
+        'ពន្លត់ម៉ាស៊ីន ទាញហ្វ្រាំងចត និងបញ្ចេញសម្ពាធមុនជួសជុល ឬចុះពីកាប៊ីន។',
+      ],
+    },
+    uz: {
+      slogan: 'Qurilish texnikasi ish zonasiga kirmang! Yo‘naltiruvchi qo‘ying va tekshiruvda dvigatelni o‘chiring!',
+      measures: [
+        'Texnika ish rejasini tuzing, ish zonasiga kirishni taqiqlang va yo‘naltiruvchi tayinlang.',
+        'Yer mustahkamligi, tayanchlar, qo‘l tormozi va nishab joylarda g‘ildirak tirgaklarini tekshiring.',
+        'Orqa signal, kamera, chiroq va gidravlika/tormoz tizimini har kuni ishdan oldin tekshiring.',
+        'Ta’mirlash yoki tushishdan oldin dvigatelni o‘chiring, tormozni torting va bosimni tushiring.',
+      ],
+    },
+  },
+  crane: CASE_TRANSLATIONS['CON-003'],
+  forklift: CASE_TRANSLATIONS['MFG-002'],
+  ladder: CASE_TRANSLATIONS['SVC-001'],
+};
+
+/**
+ * Fallback translations by HazardType for cases without an exact built-in ID or equipment match.
+ * Uses cargo_vehicle (general vehicle/blind-spot safety) instead of forklift-specific MFG-002 for generic struck-by.
  */
 const HAZARD_FALLBACK_TRANSLATIONS: Record<
   'fall' | 'caught' | 'struck' | 'confined' | 'collapse',
@@ -600,10 +783,30 @@ const HAZARD_FALLBACK_TRANSLATIONS: Record<
 > = {
   fall: CASE_TRANSLATIONS['CON-001'],
   caught: CASE_TRANSLATIONS['MFG-001'],
-  struck: CASE_TRANSLATIONS['MFG-002'],
+  struck: EQUIPMENT_FALLBACK_TRANSLATIONS.cargo_vehicle,
   confined: CASE_TRANSLATIONS['CON-004'],
   collapse: CASE_TRANSLATIONS['CON-002'],
 };
+
+function resolveEquipmentFallbackKey(
+  c: AccidentCase
+): keyof typeof EQUIPMENT_FALLBACK_TRANSLATIONS | null {
+  const equip = (c.equipment || '').trim();
+  const title = (c.title || '').trim();
+  const check = (re: RegExp) => re.test(equip) || re.test(title);
+
+  if (check(/지게차|포크리프트/)) return 'forklift';
+  if (check(/트레일러|화물자동차|화물차량|화물차|덤프트럭|덤프|암롤|카고트럭|카고|탑차|윙바디|운반차량/)) {
+    return 'cargo_vehicle';
+  }
+  if (check(/굴착기|포크레인|백호/)) return 'excavator';
+  if (check(/롤러|로더|불도저|항타기|레미콘|콘크리트\s*펌프카|펌프카|아스팔트\s*피니셔|건설기계/)) {
+    return 'construction_machinery';
+  }
+  if (check(/타워크레인|크레인|호이스트|양중|줄걸이|인양물/)) return 'crane';
+  if (check(/사다리/)) return 'ladder';
+  return null;
+}
 
 function resolveHazardFallbackKey(
   hazard: HazardType
@@ -664,6 +867,10 @@ export function getCaseTranslations(
   if (lang === 'none') return null;
   const exact = CASE_TRANSLATIONS[accidentCase.id]?.[lang];
   if (exact) return exact;
+  const equipKey = resolveEquipmentFallbackKey(accidentCase);
+  if (equipKey) {
+    return EQUIPMENT_FALLBACK_TRANSLATIONS[equipKey][lang] ?? null;
+  }
   const key = resolveHazardFallbackKey(accidentCase.hazard_type);
   return HAZARD_FALLBACK_TRANSLATIONS[key]?.[lang] ?? null;
 }

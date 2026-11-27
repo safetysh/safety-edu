@@ -14,6 +14,9 @@ import { GeneratedMaterial } from '../types/safety';
 import {
   getCaseOverviewVerbatim,
   getDisplaySourceRef,
+  getMeasuresSourceCaption,
+  getTbmSourceCaption,
+  hasOfficialKoshaMeasures,
   isOfficialKoshaApiCase,
 } from '../utils/textFit';
 
@@ -72,17 +75,15 @@ export const MobileEditSheet: React.FC<MobileEditSheetProps> = ({
 
   const c = material.primaryCase;
   const isOfficialKosha = isOfficialKoshaApiCase(c);
+  const hasOfficialMeasures = hasOfficialKoshaMeasures(c);
   const isMeasuresEdited = Boolean(material.isMeasuresEdited);
   const isTbmEdited = Boolean(material.isTbmEdited);
   const isAnyEdited = Boolean(material.isCustomEdited);
 
-  const statusLabel = isOfficialKosha
-    ? isAnyEdited
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : '공단 공식 원문 기준'
-    : isAnyEdited
-      ? '표준 가이드 기반 · 현장 맞춤 반영'
-      : '표준 가이드 기준';
+  const statusLabel =
+    tab === 'tbm'
+      ? getTbmSourceCaption(c, isTbmEdited)
+      : getMeasuresSourceCaption(c, isMeasuresEdited);
 
   const handleMeasureChange = (idx: number, val: string) => {
     const next = [...c.preventive_measures];
@@ -145,7 +146,7 @@ export const MobileEditSheet: React.FC<MobileEditSheetProps> = ({
                 className="min-h-[44px] px-2.5 rounded-lg border border-orange-400/70 bg-orange-500/20 text-orange-100 text-[12px] font-bold inline-flex items-center gap-1 active:bg-orange-500/35 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-                <span>{isOfficialKosha ? '공단 원문 복원' : '표준 복원'}</span>
+                <span>{hasOfficialMeasures ? '공단 원문 복원' : '표준 복원'}</span>
               </button>
             )}
             <button

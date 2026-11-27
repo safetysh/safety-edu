@@ -16,7 +16,9 @@ import {
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
   getDisplaySourceRef,
+  getMeasuresSourceCaption,
   getSourceBrandStyle,
+  getTbmSourceCaption,
   isOfficialKoshaApiCase,
 } from './textFit';
 import { generateLocalQrDataUrl } from './qrLocal';
@@ -75,15 +77,8 @@ export async function downloadSafetyPptx(
 
   const isMeasuresEdited = Boolean(material.isMeasuresEdited || material.isCustomEdited);
   const isTbmEdited = Boolean(material.isTbmEdited);
-  const measuresAttributionLabel = isMeasuresEdited
-    ? isOfficialKosha
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : '표준 가이드 기반 · 현장 맞춤 반영'
-    : !isOfficialKosha
-      ? '표준 가이드'
-      : c.source_type === 'SIF'
-        ? '공단 원문 (SIF 위험성감소대책)'
-        : '공단 표준 예방가이드 원문';
+  const measuresAttributionLabel = getMeasuresSourceCaption(c, isMeasuresEdited);
+  const tbmAttributionLabel = getTbmSourceCaption(c, isTbmEdited);
 
   const addLogoIfPresent = (slide: PptxGenJS.Slide, x: number, y: number, w = 1.05, h = 0.28) => {
     if (!siteInfo.logoDataUrl) return;
@@ -587,34 +582,59 @@ export async function downloadSafetyPptx(
     );
 
     if (showOX) {
+      const oxCausePrefix = isSif ? '[SIF 유발요인 원문]' : '[발생원인 원문 고정]';
+      const oxCauseText = isSif
+        ? `${c.high_risk_work || c.work_type} — ${c.hazard_factor || c.direct_causes[0]}`
+        : c.direct_causes.filter(Boolean).slice(0, 2).join(' · ');
+
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.45,
+        y: 0.78,
+        w: 9.1,
+        h: 0.42,
+        fill: { color: sourceBrand.pptxSoftBg },
+        line: { color: primaryAccentPptx, width: 0.8 },
+      });
+      slide.addText(`${oxCausePrefix}  ${oxCauseText}`, {
+        x: 0.58,
+        y: 0.78,
+        w: 8.85,
+        h: 0.42,
+        fontFace: FONT,
+        fontSize: 9.2,
+        bold: true,
+        color: '0F172A',
+        valign: 'middle',
+      });
+
       c.ox_comparison.forEach((pair, idx) => {
-        const yBase = 0.92 + idx * 2.08;
+        const yBase = 1.32 + idx * 1.88;
 
         slide.addShape(pptx.ShapeType.rect, {
           x: 0.45,
           y: yBase,
           w: 4.35,
-          h: 1.45,
+          h: 1.32,
           fill: { color: 'FEF2F2' },
           line: { color: 'FCA5A5', width: 1 },
         });
         slide.addText(`X  잘못된 현장 관행 ${idx + 1}`, {
           x: 0.62,
-          y: yBase + 0.1,
+          y: yBase + 0.08,
           w: 4.0,
-          h: 0.28,
+          h: 0.26,
           fontFace: FONT,
-          fontSize: 11,
+          fontSize: 10.6,
           bold: true,
           color: 'B91C1C',
         });
         slide.addText(pair.wrong, {
           x: 0.62,
-          y: yBase + 0.42,
+          y: yBase + 0.36,
           w: 4.0,
-          h: 0.92,
+          h: 0.88,
           fontFace: FONT,
-          fontSize: 11.2,
+          fontSize: 10.8,
           bold: true,
           color: '1E293B',
           valign: 'top',
@@ -622,9 +642,9 @@ export async function downloadSafetyPptx(
 
         slide.addShape(pptx.ShapeType.rightArrow, {
           x: 4.9,
-          y: yBase + 0.58,
+          y: yBase + 0.52,
           w: 0.2,
-          h: 0.28,
+          h: 0.26,
           fill: { color: '0F172A' },
           line: { color: '0F172A', width: 0 },
         });
@@ -633,27 +653,27 @@ export async function downloadSafetyPptx(
           x: 5.2,
           y: yBase,
           w: 4.35,
-          h: 1.45,
+          h: 1.32,
           fill: { color: 'F0FDF4' },
           line: { color: '86EFAC', width: 1 },
         });
         slide.addText(`O  반드시 지켜야 할 원칙 ${idx + 1}`, {
           x: 5.37,
-          y: yBase + 0.1,
+          y: yBase + 0.08,
           w: 4.0,
-          h: 0.28,
+          h: 0.26,
           fontFace: FONT,
-          fontSize: 11,
+          fontSize: 10.6,
           bold: true,
           color: '15803D',
         });
         slide.addText(pair.right, {
           x: 5.37,
-          y: yBase + 0.42,
+          y: yBase + 0.36,
           w: 4.0,
-          h: 0.92,
+          h: 0.88,
           fontFace: FONT,
-          fontSize: 11.2,
+          fontSize: 10.8,
           bold: true,
           color: '1E293B',
           valign: 'top',
@@ -661,19 +681,19 @@ export async function downloadSafetyPptx(
 
         slide.addShape(pptx.ShapeType.rect, {
           x: 0.45,
-          y: yBase + 1.5,
+          y: yBase + 1.36,
           w: 9.1,
-          h: 0.4,
+          h: 0.38,
           fill: { color: 'F8FAFC' },
           line: { color: 'E2E8F0', width: 0.5 },
         });
         slide.addText(`위험 해설: ${pair.note}`, {
           x: 0.62,
-          y: yBase + 1.5,
+          y: yBase + 1.36,
           w: 8.75,
-          h: 0.4,
+          h: 0.38,
           fontFace: FONT,
-          fontSize: 10,
+          fontSize: 9.6,
           color: '475569',
           valign: 'middle',
         });
@@ -1166,13 +1186,7 @@ export async function downloadSafetyPptx(
   // =========================================================================
   {
     const slide = pptx.addSlide();
-    const tbmAttr = isTbmEdited
-      ? isOfficialKosha
-        ? '공단 권고안 기반 · 현장 맞춤 반영'
-        : '표준 가이드 기반 · 현장 맞춤 반영'
-      : isOfficialKosha
-        ? '공단 원문 가이드'
-        : '표준 가이드';
+    const tbmAttr = tbmAttributionLabel;
     addSlideChrome(slide, 5, `04. 작업 전 5분 TBM 체크리스트 [${tbmAttr}] 및 KYT 퀴즈`);
 
     slide.addShape(pptx.ShapeType.rect, {
@@ -1267,7 +1281,11 @@ export async function downloadSafetyPptx(
       valign: 'top',
     });
 
-    c.kyt_quiz.answers.forEach((ans, idx) => {
+    const liveKytAnswers =
+      c.preventive_measures.length > 0
+        ? c.preventive_measures.slice(0, 3)
+        : c.kyt_quiz.answers.slice(0, 3);
+    liveKytAnswers.forEach((ans, idx) => {
       slide.addText(`✔ ${idx + 1}) ${ans}`, {
         x: 6.05,
         y: 2.24 + idx * 0.5,

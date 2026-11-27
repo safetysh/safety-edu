@@ -224,6 +224,56 @@ export function isOfficialKoshaApiCase(c: AccidentCase): boolean {
   return c.source_type === 'SIF' || c.source_type === 'FATALITY' || c.source_type === 'CASE';
 }
 
+/**
+ * Returns true strictly when preventive measures originated verbatim from KOSHA API
+ * (e.g., SIF reduction measures). Returns false for FATALITY / CASE auto-matched
+ * equipment templates and built-in standard models.
+ */
+export function hasOfficialKoshaMeasures(c: AccidentCase): boolean {
+  if (!isOfficialKoshaApiCase(c)) return false;
+  if (typeof c.has_official_measures === 'boolean') {
+    return c.has_official_measures;
+  }
+  return c.source_type === 'SIF';
+}
+
+export function getMeasuresSourceCaption(c: AccidentCase, isEdited: boolean): string {
+  if (hasOfficialKoshaMeasures(c)) {
+    if (isEdited) return '공단 권고안 기반 · 현장 맞춤 반영';
+    return c.source_type === 'SIF' ? '공단 원문 (SIF 위험성감소대책)' : '공단 원문 가이드';
+  }
+  return isEdited ? '표준 가이드 기반 · 현장 맞춤 반영' : '기인물 표준 안전가이드';
+}
+
+export function getTbmSourceCaption(c: AccidentCase, isEdited: boolean): string {
+  if (isEdited) {
+    return hasOfficialKoshaMeasures(c)
+      ? '공단 권고안 기반 · 현장 맞춤 반영'
+      : '표준 가이드 기반 · 현장 맞춤 반영';
+  }
+  return '기인물 표준 점검표';
+}
+
+export function getFooterSourceCaption(c: AccidentCase, isCustomEdited: boolean): string {
+  if (hasOfficialKoshaMeasures(c)) {
+    return isCustomEdited
+      ? '대책: 공단 권고안 기반 · 현장 맞춤 반영'
+      : '사실·대책: 공단 공식 원문 기준';
+  }
+  if (isOfficialKoshaApiCase(c)) {
+    return isCustomEdited
+      ? '사실: 공단 원문 · 대책: 현장 맞춤 반영'
+      : '사실: 공단 원문 · 대책: 기인물 표준 가이드';
+  }
+  return isCustomEdited
+    ? '대책: 표준 가이드 기반 · 현장 맞춤 반영'
+    : '사실·대책: 표준 교육모델 기준';
+}
+
+export function getResetMeasuresLabel(c: AccidentCase): string {
+  return hasOfficialKoshaMeasures(c) ? '↺ 공단 원문 복원' : '↺ 표준 가이드 복원';
+}
+
 export function getDisplaySourceRef(c: AccidentCase): string {
   if (isStandardModelCase(c)) {
     return STANDARD_MODEL_SOURCE_REF;

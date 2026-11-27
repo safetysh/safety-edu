@@ -274,6 +274,7 @@ interface MechanismFlowProps {
   compact?: boolean;
   inkSaver?: boolean;
   accentHex?: string;
+  variant?: 'default' | 'expanded' | 'strip';
 }
 
 function formatTimelineBadge(step: string, label: string): string {
@@ -295,8 +296,64 @@ export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
   compact = false,
   inkSaver = false,
   accentHex,
+  variant = 'default',
 }) => {
   const arrowColor = inkSaver ? '#0F172A' : accentHex || theme.primaryHex;
+
+  // Ultra-compact single-row strip for '5분 TBM 실전형' so TBM checklist takes primary A4 visual weight
+  if (variant === 'strip') {
+    return (
+      <div
+        className="w-full rounded-md border px-2 py-1.5 keep-all"
+        style={{
+          backgroundColor: inkSaver ? '#FFFFFF' : '#F8FAFC',
+          borderColor: inkSaver ? '#475569' : '#CBD5E1',
+        }}
+      >
+        <div className="grid grid-cols-4 gap-1.5 items-start">
+          {timeline.map((stage, idx) => {
+            const isFinal = idx === timeline.length - 1;
+            const shortLabel = (stage.label || stage.step || `${idx + 1}단계`).trim();
+            return (
+              <div key={`${stage.step}-${idx}`} className="flex items-start gap-1 min-w-0">
+                <span
+                  className="shrink-0 w-3.5 h-3.5 rounded-sm text-[8.5px] font-extrabold flex items-center justify-center mt-0.5 tabular-nums"
+                  style={
+                    inkSaver
+                      ? { backgroundColor: '#F1F5F9', color: '#0F172A', border: '1px solid #334155' }
+                      : { backgroundColor: isFinal ? '#047857' : '#1E293B', color: '#FFFFFF' }
+                  }
+                >
+                  {idx + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1">
+                    <span
+                      className={`text-[8.8px] font-extrabold truncate ${
+                        isFinal && !inkSaver ? 'text-emerald-800' : 'text-slate-700'
+                      }`}
+                    >
+                      {shortLabel}
+                    </span>
+                    {idx < timeline.length - 1 && (
+                      <span className="text-[9px] font-black shrink-0" style={{ color: arrowColor }}>
+                        →
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[9.1px] font-medium text-slate-900 leading-tight line-clamp-2">
+                    {stage.detail}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const isExpanded = variant === 'expanded' && !compact;
 
   return (
     <div className="w-full keep-all">
@@ -309,15 +366,19 @@ export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
             ? detailLen > 55
               ? 'text-[9.4px]'
               : 'text-[10px]'
-            : detailLen > 55
-              ? 'text-[10px]'
-              : 'text-[10.6px]';
+            : isExpanded
+              ? detailLen > 55
+                ? 'text-[10.3px]'
+                : 'text-[11px]'
+              : detailLen > 55
+                ? 'text-[10px]'
+                : 'text-[10.6px]';
 
           return (
             <div key={`${stage.step}-${idx}`} className="relative flex items-stretch">
               <div
                 className={`flex-1 flex flex-col justify-start rounded-md border ${
-                  compact ? 'p-1.5' : 'p-2'
+                  compact ? 'p-1.5' : isExpanded ? 'p-2.5 shadow-2xs' : 'p-2'
                 }`}
                 style={{
                   backgroundColor: inkSaver
@@ -331,14 +392,16 @@ export const AccidentMechanismDiagram: React.FC<MechanismFlowProps> = ({
                       : '#64748B'
                     : isFinal
                       ? '#059669'
-                      : '#CBD5E1',
-                  borderWidth: inkSaver && isFinal ? '1.5px' : '1px',
+                      : isExpanded
+                        ? '#94A3B8'
+                        : '#CBD5E1',
+                  borderWidth: (inkSaver && isFinal) || isExpanded ? '1.5px' : '1px',
                 }}
               >
                 <div className="flex items-center justify-between gap-1 mb-1">
                   <span
                     className={`font-bold px-1.5 py-0.5 rounded-sm leading-tight ${
-                      compact ? 'text-[9.5px]' : 'text-[10.2px]'
+                      compact ? 'text-[9.5px]' : isExpanded ? 'text-[10.4px]' : 'text-[10.2px]'
                     }`}
                     style={
                       inkSaver

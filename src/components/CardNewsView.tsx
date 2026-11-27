@@ -26,7 +26,9 @@ import {
   fitFactualOverviewForA4,
   formatSourceHeaderBadge,
   getCaseOverviewVerbatim,
+  getMeasuresSourceCaption,
   getSourceBrandStyle,
+  getTbmSourceCaption,
   isOfficialKoshaApiCase,
 } from '../utils/textFit';
 
@@ -81,13 +83,11 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
 
   const isOfficialKosha = isOfficialKoshaApiCase(c);
   const overviewFit = fitFactualOverviewForA4(getCaseOverviewVerbatim(c), 1, false, 200);
-  const measuresSourceTag = material.isCustomEdited
-    ? isOfficialKosha
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : '표준 가이드 기반 · 현장 맞춤 반영'
-    : isOfficialKosha
-      ? '공단 원문 기준'
-      : '표준 가이드';
+  const measuresSourceTag = getMeasuresSourceCaption(
+    c,
+    Boolean(material.isMeasuresEdited || material.isCustomEdited)
+  );
+  const tbmSourceTag = getTbmSourceCaption(c, Boolean(material.isTbmEdited));
 
   const handleDownloadSingle = async (idx: number) => {
     const node = cardRefs.current[idx];
@@ -500,7 +500,7 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
                   className="text-[10px] font-bold px-2 py-0.5 rounded-sm text-white"
                   style={{ backgroundColor: accentHex }}
                 >
-                  {material.isTbmEdited ? '현장 맞춤 반영' : '필수 점검'}
+                  {tbmSourceTag}
                 </span>
               </div>
               <div className="h-1 w-full" style={{ backgroundColor: accentHex }} />

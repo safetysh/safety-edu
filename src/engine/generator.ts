@@ -32,6 +32,27 @@ export interface GenerationHistoryState {
   recentRelatedIds?: string[];
 }
 
+const CARGO_VEHICLE_DISPLAY_RE =
+  /트레일러|화물자동차|화물차량|화물차|덤프트럭|덤프|암롤|카고트럭|카고|탑차|윙바디|컨테이너\s*운반/;
+
+/**
+ * Returns the most accurate display work-type label for headers/exports without mutating sidebar filters.
+ * Prevents cargo/trailer accidents from displaying misleading '지게차 작업' labels in Page 1/PPTX headers.
+ */
+export function getDisplayWorkTypeForCase(c: AccidentCase, fallbackWorkType: string): string {
+  const eqTitle = `${c.equipment || ''} ${c.title || ''}`;
+  const base = (c.work_type || fallbackWorkType || '').trim();
+  if (
+    CARGO_VEHICLE_DISPLAY_RE.test(eqTitle) &&
+    !/지게차|포크리프트|굴착기|포크레인/.test(c.equipment || '') &&
+    (/지게차|물류창고|물류\s*하역|굴착·가시설/.test(base) ||
+      /지게차|물류창고|물류\s*하역|굴착·가시설/.test(fallbackWorkType))
+  ) {
+    return '화물차·트레일러 운반·하역 작업';
+  }
+  return fallbackWorkType || base;
+}
+
 const MECHANISM_GROUPS: Array<{ name: string; keywords: string[] }> = [
   {
     name: '고소·추락 메커니즘',
@@ -42,9 +63,15 @@ const MECHANISM_GROUPS: Array<{ name: string; keywords: string[] }> = [
     keywords: ['컨베이어', '회전체', '프레스', '절곡', '전단', '파쇄', '압축기', '끼임', '협착', '절단', '조리'],
   },
   {
-    name: '차량·양중 충돌·맞음 메커니즘',
+    name: '차량·운반장비 충돌·부딪힘 메커니즘',
     keywords: [
       '지게차',
+      '트레일러',
+      '화물차',
+      '화물자동차',
+      '덤프',
+      '암롤',
+      '운반차량',
       '물류',
       '상하차',
       '하역',
@@ -52,14 +79,10 @@ const MECHANISM_GROUPS: Array<{ name: string; keywords: string[] }> = [
       '배달',
       '이륜차',
       '운행',
+      '후진',
       '부딪힘',
       '충돌',
-      '타워크레인',
-      '양중',
-      '맞음',
-      '낙하',
       '깔림',
-      '뒤집힘',
     ],
   },
   {
@@ -68,7 +91,11 @@ const MECHANISM_GROUPS: Array<{ name: string; keywords: string[] }> = [
   },
   {
     name: '굴착·지반 붕괴 메커니즘',
-    keywords: ['굴착', '가시설', '토목', '붕괴', '무너짐', '매몰', '양중', '크레인'],
+    keywords: ['굴착', '굴착기', '가시설', '토목', '붕괴', '무너짐', '매몰', '흙막이'],
+  },
+  {
+    name: '양중·크레인 낙하·맞음 메커니즘',
+    keywords: ['타워크레인', '크레인', '호이스트', '양중', '인양', '줄걸이', '펌프카', '붐대', '맞음', '낙하', '뒤집힘'],
   },
 ];
 
@@ -116,7 +143,6 @@ export function getNativeThemeForHazard(hazard: HazardType, sourceType?: SourceT
 }
 
 const caseMaskCache = new WeakMap<AccidentCase, number>();
-const caseCrossMaskCache = new WeakMap<AccidentCase, number>();
 
 function getMechanismMask(text: string): number {
   let mask = 0;
@@ -139,15 +165,6 @@ function getCaseFullMask(c: AccidentCase): number {
       `${c.work_type} ${c.equipment} ${c.hazard_type} ${c.related_work_types.join(' ')}`
     );
     caseMaskCache.set(c, mask);
-  }
-  return mask;
-}
-
-function getCaseWorkHazardMask(c: AccidentCase): number {
-  let mask = caseCrossMaskCache.get(c);
-  if (mask === undefined) {
-    mask = getMechanismMask(`${c.work_type} ${c.hazard_type}`);
-    caseCrossMaskCache.set(c, mask);
   }
   return mask;
 }
@@ -493,6 +510,23 @@ function getCachedPrimaryPools(
   return entry;
 }
 
+function getCrossEquipmentFamily(c: AccidentCase): string {
+  const txt = `${c.equipment || ''} ${c.title || ''}`;
+  if (/지게차|포크리프트/.test(txt)) {
+    return 'forklift';
+  }
+  if (/트레일러|화물차|화물자동차|덤프|암롤|카고|탑차|윙바디|트럭|운반차량|차량/.test(txt)) {
+    return 'cargo';
+  }
+  if (/크레인|펌프카|호이스트|붐대|인양물|줄걸이/.test(txt)) {
+    return 'lifting';
+  }
+  if (/굴착기|포크레인|백호|롤러|로더|불도저|레미콘|항타기/.test(txt)) {
+    return 'heavy_eq';
+  }
+  return 'general';
+}
+
 function findCrossProcessCase(
   allCases: AccidentCase[],
   index: AllCasesIndex,
@@ -502,11 +536,12 @@ function findCrossProcessCase(
 ): AccidentCase | null {
   if (allCases.length <= 1) return null;
 
-  const crossKey = `${primary.industry}|${primary.work_type}|${primary.hazard_type}`;
+  const primaryFamily = getCrossEquipmentFamily(primary);
+  const crossKey = `${primary.industry}|${primary.work_type}|${primary.hazard_type}|${primaryFamily}`;
   let topPool = index.crossPools.get(crossKey);
 
   if (!topPool) {
-    const pMask = getCaseWorkHazardMask(primary);
+    const pMask = getCaseFullMask(primary);
     const pRelated = primary.related_work_types;
 
     // Prioritize real KOSHA API cases from OTHER industries; fallback to built-in cross-industry templates only before other shards load
@@ -532,8 +567,31 @@ function findCrossProcessCase(
       ) {
         score += 35;
       }
-      const overlap = countBits5(pMask & getCaseWorkHazardMask(c));
+      const overlap = countBits5(pMask & getCaseFullMask(c));
       if (overlap > 0) score += overlap * 18;
+
+      const candFamily = getCrossEquipmentFamily(c);
+      if (primaryFamily !== 'general') {
+        if (candFamily === primaryFamily) {
+          score += 42;
+        } else if (
+          (primaryFamily === 'cargo' && candFamily === 'forklift') ||
+          (primaryFamily === 'forklift' && candFamily === 'cargo')
+        ) {
+          score -= 18;
+        } else if (
+          (primaryFamily === 'cargo' || primaryFamily === 'forklift') &&
+          candFamily === 'lifting'
+        ) {
+          score -= 35;
+        } else if (
+          primaryFamily === 'lifting' &&
+          (candFamily === 'cargo' || candFamily === 'forklift')
+        ) {
+          score -= 35;
+        }
+      }
+
       scores[i] = score;
       if (score > topScore) topScore = score;
     }
@@ -816,10 +874,13 @@ export function generateEducationMaterial(params: {
       ? [...recentRelated.slice(-24), relatedCase.id]
       : recentRelated;
 
+  const baseWorkType = pinnedMatch ? chosen.item.work_type : workType;
+  const displayWorkType = getDisplayWorkTypeForCase(chosen.item, baseWorkType);
+
   const material: GeneratedMaterial = {
     version: nextVersion,
     selectedIndustry: pinnedMatch ? chosen.item.industry : industry,
-    selectedWorkType: pinnedMatch ? chosen.item.work_type : workType,
+    selectedWorkType: displayWorkType,
     primaryCase: chosen.item,
     relatedCase,
     isExactMatch: chosen.isExact,
@@ -1230,8 +1291,8 @@ const EQUIPMENT_PRIORITY_GUIDES: EquipmentPriorityGuide[] = [
     ],
     ox_comparison: [
       {
-        wrong: '“섬유로프가 조금 닳았지만 가벼운 철거물이니 한 번만 더 인양하자.”',
-        right: '손상·마모된 섬유로프·와이어로프는 즉시 폐기하고 안전계수 충족 줄걸이만 사용한다.',
+        wrong: '“줄걸이 로프·슬링벨트가 조금 닳았지만 가벼운 자재니 한 번만 더 인양하자.”',
+        right: '손상·마모된 와이어로프·섬유로프·슬링벨트는 즉시 폐기하고 안전계수 충족 줄걸이만 사용한다.',
         note: '손상된 줄걸이 파단은 인양물 낙하로 하부 작업자 즉사 사고로 이어집니다.',
       },
       {
@@ -1243,32 +1304,94 @@ const EQUIPMENT_PRIORITY_GUIDES: EquipmentPriorityGuide[] = [
     worker_slogan: '줄걸이 손상 사전 폐기! 인양물 하부 출입 금지! 신호수 통일 신호!',
   },
   {
-    id: 'heavy_vehicle',
-    equipRe: /굴착기|롤러|로더|덤프|불도저|항타기|레미콘|트레일러|화물자동차|화물차|암롤/,
-    titleRe: /굴착기|롤러|레미콘|덤프|트레일러|화물차|후진하는\s*차량/,
+    id: 'cargo_vehicle',
+    equipRe: /트레일러|화물자동차|화물차량|화물차|덤프트럭|덤프|암롤|카고트럭|카고|탑차|윙바디|컨테이너\s*운반/,
+    titleRe: /트레일러|화물자동차|화물차량|화물차|덤프트럭|덤프|암롤|운행\s*중인\s*차량|후진하는\s*차량/,
     preventive_measures: [
-      '차량계 건설기계·하역차량 작업계획서 작성 및 작업반경 내 근로자 출입 통제·유도자 배치',
-      '후진 경보장치·후방카메라·제동장치 정상 작동 확인 및 사각지대 보행·휴식 절대 금지',
-      '굴착기 퀵커플러 안전핀 체결 확인 및 버킷·붐대 용도 외 사용(인양·탑승) 금지',
-      '경사지·연약지반 전도 방지 지반 보강 및 주정차 시 시동 정지·브레이크·바퀴 고임목 설치',
+      '화물차·트레일러 운행·상하차 구역과 보행자 통로 물리적 분리 및 우회전·후진 사각지대 출입 통제',
+      '후진·우회전·교차 구간 전담 유도자(신호수) 배치 및 운전자·유도자 간 표준 신호체계 통일',
+      '후방카메라·후진 경보장치·사각지대 반사경·제동장치 일일 점검 및 구내 제한속도 서행 준수',
+      '정차·적재함 작업 시 시동 정지·주차브레이크 체결·바퀴 고임목 설치 및 적재 화물 결속 상태 확인',
     ],
     tbm_checklist: [
-      '차량·건설기계 작업반경 내 근로자 출입 통제선과 전담 유도자가 배치되었는가?',
+      '화물차·트레일러 이동 경로와 보행자 통로가 명확히 분리되고 출입 통제가 되었는가?',
+      '후진·우회전 사각지대 구간에 전담 유도자(신호수)가 배치되고 신호가 통일되었는가?',
+      '차량 후방카메라·후진 경보음·경광등·제동장치가 정상 작동하는지 점검했는가?',
+      '정차 및 하차·점검 시 시동 정지·주차브레이크 체결·바퀴 고임목 설치 원칙을 확인했는가?',
+      '적재 화물 편하중·이탈 방지를 위한 결속 상태 및 적재함 주변 안전거리를 확인했는가?',
+    ],
+    ox_comparison: [
+      {
+        wrong: '“트레일러·화물차가 천천히 우회전·후진하니 유도자 없이 백미러만 보고 이동하자.”',
+        right: '대형 운반차량 우회전·후진 시 반드시 보행자 통행을 차단하고 전담 유도자 신호에 따라 이동한다.',
+        note: '트레일러·화물차 우회전 내륜차 및 후진 사각지대는 보행자 부딪힘·깔림 사망의 최다 원인입니다.',
+      },
+      {
+        wrong: '“잠깐 적재함만 확인하고 다시 출발할 거니 시동을 켠 채 고임목 없이 세워두자.”',
+        right: '운전자 하차·정차 시 반드시 시동을 끄고 주차브레이크 체결과 바퀴 고임목을 설치한다.',
+        note: '경사로·부두·야적장에서 브레이크 풀림·밀림으로 인한 끼임·깔림 사망사고가 빈번합니다.',
+      },
+    ],
+    worker_slogan: '우회전·후진 사각지대 출입 금지! 유도자 배치·고임목 체결 필수!',
+  },
+  {
+    id: 'excavator',
+    equipRe: /굴착기|포크레인|백호/,
+    titleRe: /굴착기|포크레인|백호/,
+    preventive_measures: [
+      '굴착기 작업계획서 작성 및 선회·작업반경 내 근로자 출입 통제·전담 유도자 배치',
+      '굴착기 퀵커플러 안전핀 체결 확인 및 버킷·붐대 용도 외 사용(자재 인양·근로자 탑승) 금지',
+      '후방카메라·후진 경보장치·회전 경고등 정상 작동 확인 및 사각지대 보행·휴식 절대 금지',
+      '경사지·연약지반 전도 방지 지반 보강 및 주정차 시 버킷 지면 안착·시동 정지·안전레버 잠금',
+    ],
+    tbm_checklist: [
+      '굴착기 작업반경·선회 구간 출입 통제선 설치 및 전담 유도자가 배치되었는가?',
+      '굴착기 퀵커플러 안전핀 체결 상태와 버킷·어태치먼트 이탈 방지 조치를 점검했는가?',
+      '후진 경보음·후방카메라·회전 경고등 및 제동장치가 정상 작동하는가?',
+      '버킷·붐대 용도 외 사용 금지 및 굴착기 사각지대 접근 금지 원칙을 공유했는가?',
+      '작업 지반 침하 여부 확인 및 정차 시 버킷 지면 안착·시동 정지·안전레버 잠금을 준수하는가?',
+    ],
+    ox_comparison: [
+      {
+        wrong: '“작업 공간이 좁으니 유도자 없이 굴착기 운전석 미러만 보고 선회·후진하자.”',
+        right: '굴착기 선회·후진 시 반드시 작업반경 출입을 통제하고 전담 유도자를 배치한다.',
+        note: '굴착기 후방·측면 선회 사각지대는 부딪힘·끼임 사망사고의 최다 발생 지점입니다.',
+      },
+      {
+        wrong: '“굴착기 버킷을 잠깐 들어 올려 자재를 매달거나 이동 발판으로 쓰자.”',
+        right: '굴착기의 주용도 외 사용을 금지하고 정격 인양장비·작업발판을 사용한다.',
+        note: '안전보건규칙 제200조는 차량계 건설기계의 주용도 외 사용을 엄격히 제한합니다.',
+      },
+    ],
+    worker_slogan: '굴착기 반경 출입 금지! 퀵커플러 안전핀 체결! 용도 외 사용 엄금!',
+  },
+  {
+    id: 'construction_machinery',
+    equipRe: /롤러|로더|불도저|항타기|천공기|레미콘|펌프카|그레이더/,
+    titleRe: /롤러|로더|불도저|항타기|천공기|레미콘|펌프카|그레이더/,
+    preventive_measures: [
+      '차량계 건설기계 작업계획서 작성 및 작업반경 내 근로자 출입 통제·전담 유도자 배치',
+      '후진 경보장치·후방카메라·제동장치 정상 작동 확인 및 장비 사각지대 보행·휴식 절대 금지',
+      '경사지·연약지반 전도 방지 지반 보강·아웃트리거 전개 및 장비 주용도 외 사용 금지',
+      '운전자 이탈·주정차 시 원동기 정지·주차브레이크 체결 및 바퀴 고임목 설치 철저',
+    ],
+    tbm_checklist: [
+      '건설기계 작업반경 내 근로자 출입 통제선과 전담 유도자가 배치되었는가?',
       '장비 후진 경보음·후방카메라·브레이크 및 회전 경고등이 정상 작동하는가?',
-      '굴착기 퀵커플러 잠금핀 체결 상태 및 장비 이동 지반의 안전성을 점검했는가?',
+      '장비 이동·설치 구간의 지반 지지력과 경사·아웃트리거 전개 상태를 점검했는가?',
       '장비 사각지대 접근 금지 및 작업자 휴식 구역 분리를 전원 주지했는가?',
       '운전자 이탈·주정차 시 원동기 정지·주차브레이크·고임목 설치 원칙을 준수하는가?',
     ],
     ox_comparison: [
       {
         wrong: '“장비 작업 반경이 좁으니 유도자 없이 운전자 백미러만 보고 후진하자.”',
-        right: '차량·건설기계 후진 및 선회 시 반드시 작업반경 출입을 통제하고 유도자를 배치한다.',
-        note: '롤러·굴착기·레미콘 후진 사각지대는 부딪힘·깔림 사망사고의 최다 발생 지점입니다.',
+        right: '건설기계 후진 및 선회 시 반드시 작업반경 출입을 통제하고 전담 유도자를 배치한다.',
+        note: '롤러·로더·레미콘 후진 사각지대는 부딪힘·깔림 사망사고의 최다 발생 지점입니다.',
       },
       {
-        wrong: '“굴착기 버킷을 잠깐 들어 올려 자재를 매달거나 이동 발판으로 쓰자.”',
-        right: '건설기계의 주용도 외 사용을 금지하고 정격 인양장비·작업발판을 사용한다.',
-        note: '안전보건규칙 제200조는 차량계 건설기계의 주용도 외 사용을 엄격히 제한합니다.',
+        wrong: '“연약한 지반이지만 잠깐 작업할 거니 지반 보강이나 고임목 없이 세워두자.”',
+        right: '작업 전 지반 지지력 보강·아웃트리거 전개를 확인하고 정차 시 시동 정지·고임목을 체결한다.',
+        note: '지반 침하·경사지 밀림은 대형 건설기계 전도 및 협착 중대재해로 직결됩니다.',
       },
     ],
     worker_slogan: '장비 작업반경 출입 금지! 후진 시 유도자 필수! 사각지대 접근 엄금!',
@@ -1325,7 +1448,7 @@ const EQUIPMENT_PRIORITY_GUIDES: EquipmentPriorityGuide[] = [
     ],
     ox_comparison: [
       {
-        wrong: '“컨베이어·배합기를 세우면 재가동이 번거로우니 돌린 채로 이물질만 털어내자.”',
+        wrong: '“설비를 세우면 재가동이 번거로우니 회전·가동 중인 상태로 이물질만 털어내자.”',
         right: '정비·청소·이물질 제거 시 반드시 운전을 정지하고 전원 차단·LOTO를 체결한다.',
         note: '안전보건규칙 제92조·제87조는 정비 시 운전정지 및 분쇄기·혼합기 연동장치를 의무화합니다.',
       },
@@ -1791,6 +1914,7 @@ export function parseCasesData(
       : pickString(entry.region, undefined, '');
 
     let preventive_measures: string[];
+    let hasOfficialMeasures = false;
     if (isV3Format && Array.isArray(entry.pm) && entry.pm.length > 0) {
       const decodedPm: string[] = [];
       for (let mIdx = 0; mIdx < entry.pm.length; mIdx++) {
@@ -1801,24 +1925,28 @@ export function parseCasesData(
             : String(ref ?? '').trim();
         if (sentence) decodedPm.push(sentence);
       }
-      preventive_measures =
-        decodedPm.length > 0
-          ? decodedPm
-          : eqPriorityGuide
-            ? eqPriorityGuide.preventive_measures
-            : preTpl
-              ? preTpl.preventive_measures
-              : DEFAULT_PREVENTIVE_MEASURES;
+      if (decodedPm.length > 0) {
+        preventive_measures = decodedPm;
+        hasOfficialMeasures = true;
+      } else {
+        preventive_measures = eqPriorityGuide
+          ? eqPriorityGuide.preventive_measures
+          : preTpl
+            ? preTpl.preventive_measures
+            : DEFAULT_PREVENTIVE_MEASURES;
+      }
     } else if (Array.isArray(entry.preventive_measures)) {
       const p = pickStringArray(entry.preventive_measures, undefined);
-      preventive_measures =
-        p.length > 0
-          ? p
-          : eqPriorityGuide
-            ? eqPriorityGuide.preventive_measures
-            : preTpl
-              ? preTpl.preventive_measures
-              : DEFAULT_PREVENTIVE_MEASURES;
+      if (p.length > 0) {
+        preventive_measures = p;
+        hasOfficialMeasures = source === 'builtin' && sourceType !== 'FATALITY';
+      } else {
+        preventive_measures = eqPriorityGuide
+          ? eqPriorityGuide.preventive_measures
+          : preTpl
+            ? preTpl.preventive_measures
+            : DEFAULT_PREVENTIVE_MEASURES;
+      }
     } else {
       preventive_measures = eqPriorityGuide
         ? eqPriorityGuide.preventive_measures
@@ -2042,6 +2170,7 @@ export function parseCasesData(
         pickString(isV3Format ? (entry.dc ?? entry.disclaimer) : entry.disclaimer, undefined, defaultDisclaimer) ||
         undefined,
       source,
+      has_official_measures: hasOfficialMeasures,
     });
   }
 

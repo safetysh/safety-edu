@@ -98,6 +98,8 @@ export interface AccidentCase {
   disclaimer?: string;
   source?: 'builtin' | 'custom';
   is_standard_model?: boolean;
+  /** True only when preventive_measures came verbatim from official KOSHA API (e.g. SIF reduction measures); false when auto-matched from equipment/standard templates. */
+  has_official_measures?: boolean;
 }
 
 export interface CaseEditableOverride {

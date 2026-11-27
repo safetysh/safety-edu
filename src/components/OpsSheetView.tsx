@@ -38,7 +38,12 @@ import {
   getCaseOverviewVerbatim,
   getCrossProcessSourceBadge,
   getDisplaySourceRef,
+  getFooterSourceCaption,
+  getMeasuresSourceCaption,
+  getResetMeasuresLabel,
   getSourceBrandStyle,
+  getTbmSourceCaption,
+  hasOfficialKoshaMeasures,
   isOfficialKoshaApiCase,
   splitSifBracketHighlights,
 } from '../utils/textFit';
@@ -105,7 +110,10 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   const season = SEASONAL_RISKS[siteInfo.seasonRisk];
   const seasonTrans = getSeasonalTranslation(siteInfo.seasonRisk, siteInfo.foreignLanguage);
 
+  const isReconstruction = perspectiveMode === 'reconstruction';
   const isTbmHighlight = perspectiveMode === 'tbm_practice';
+  const isOxCompare = perspectiveMode === 'ox_compare';
+  const isKytQuiz = perspectiveMode === 'kyt_quiz';
 
   // Adaptive vertical slot budget computation
   const extraCount =
@@ -113,7 +121,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
     (siteInfo.showTbmSignTable ? 1 : 0) +
     (season.id !== 'always' ? 1 : 0) +
     (c.preventive_measures.length > 4 ? 1 : 0) +
-    (c.tbm_checklist.length > 5 ? 1 : 0);
+    (!isReconstruction && c.tbm_checklist.length > 5 ? 1 : 0);
   const dense = extraCount >= 1;
   const ultraDense = extraCount >= 2;
 
@@ -153,24 +161,11 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   );
 
   const isOfficialKosha = isOfficialKoshaApiCase(c);
+  const hasOfficialMeasures = hasOfficialKoshaMeasures(c);
 
-  const measuresSourceCaption = isOfficialKosha
-    ? isMeasuresEdited
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : isSif
-        ? '공단 원문 (SIF 위험성감소대책)'
-        : '공단 원문 가이드'
-    : isMeasuresEdited
-      ? '표준 가이드 기반 · 현장 맞춤 반영'
-      : '표준 가이드';
-
-  const tbmSourceCaption = isOfficialKosha
-    ? isTbmEdited
-      ? '공단 권고안 기반 · 현장 맞춤 반영'
-      : '공단 원문 가이드'
-    : isTbmEdited
-      ? '표준 가이드 기반 · 현장 맞춤 반영'
-      : '표준 가이드';
+  const measuresSourceCaption = getMeasuresSourceCaption(c, isMeasuresEdited);
+  const tbmSourceCaption = getTbmSourceCaption(c, isTbmEdited);
+  const resetMeasuresLabel = getResetMeasuresLabel(c);
 
   const handleChangeMeasureText = (idx: number, val: string) => {
     if (!onUpdateMeasures) return;
@@ -329,6 +324,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
         compact={dense}
         inkSaver={inkSaver}
         accentHex={accentHex}
+        variant={isTbmHighlight ? 'strip' : isReconstruction ? 'expanded' : 'default'}
       />
     </section>
   );
@@ -337,175 +333,459 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   // 02. 핵심 원인 분석 [Read-Only 고정] + 예방대책 [현장 맞춤 인라인 편집]
   // =========================================================================
   const renderSection02AnalysisAndMeasures = () => {
-    const renderLockedAnalysisFrame = () => {
-      if (perspectiveMode === 'ox_compare') {
-        return (
-          <div className="grid grid-cols-2 gap-2">
-            {c.ox_comparison.map((pair, idx) => (
-              <div
-                key={idx}
-                className="border rounded-md overflow-hidden flex flex-col"
-                style={{ borderColor: inkSaver ? '#475569' : '#CBD5E1' }}
-              >
-                <div
-                  className={`${inkSaver ? 'bg-white' : 'bg-red-50/80'} ${
-                    ultraDense ? 'px-2.5 py-1.5' : 'px-2.5 py-1.5'
-                  }`}
-                >
-                  <div className="flex items-start gap-1.5">
-                    <span
-                      className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-sm text-[9.5px] font-bold mt-0.5 ${
-                        inkSaver
-                          ? 'bg-white text-slate-950 border border-slate-900'
-                          : 'bg-red-700 text-white'
-                      }`}
-                    >
-                      X
-                    </span>
-                    <p className="font-semibold text-slate-950 leading-snug keep-all text-[10px]">
-                      {pair.wrong}
-                    </p>
-                  </div>
-                </div>
-                <div
-                  className={`border-t flex-1 ${
-                    inkSaver ? 'bg-slate-50 border-slate-300' : 'bg-emerald-50/80 border-slate-200'
-                  } ${ultraDense ? 'px-2.5 py-1.5' : 'px-2.5 py-1.5'}`}
-                >
-                  <div className="flex items-start gap-1.5">
-                    <span
-                      className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-sm text-[9.5px] font-bold mt-0.5 ${
-                        inkSaver ? 'bg-slate-900 text-white' : 'bg-emerald-700 text-white'
-                      }`}
-                    >
-                      O
-                    </span>
-                    <p className="font-semibold text-slate-950 leading-snug keep-all text-[10px]">
-                      {pair.right}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-      }
-
-      if (perspectiveMode === 'kyt_quiz') {
-        return (
-          <div
-            className={`rounded-md border ${ultraDense ? 'p-2' : 'p-2.5'}`}
-            style={{
-              backgroundColor: inkSaver ? '#FFFFFF' : theme.softBgHex,
-              borderColor: inkSaver ? '#334155' : theme.borderHex,
-            }}
-          >
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <p
-                className="text-[10.4px] font-extrabold tracking-tight"
-                style={{ color: inkSaver ? '#0F172A' : theme.accentTextHex }}
-              >
-                현장 위험예지(KYT) 토의 질문
-              </p>
-              {!isPrintClone && onToggleKytAnswers && (
-                <button
-                  type="button"
-                  data-export-hide="true"
-                  onClick={onToggleKytAnswers}
-                  className="no-print inline-flex items-center gap-1 text-[10px] font-semibold text-slate-700 hover:text-slate-950 cursor-pointer"
-                >
-                  {showKytAnswers ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  <span>{showKytAnswers ? '정답 숨기기' : '모범 정답 보기'}</span>
-                </button>
-              )}
-            </div>
-            <p className="text-[11px] font-bold text-slate-950 leading-snug keep-all mb-1.5">
-              Q. {c.kyt_quiz.question}
-            </p>
-            {showKytAnswers ? (
-              <div
-                className="grid grid-cols-3 gap-1.5 border-t pt-1.5"
-                style={{ borderColor: inkSaver ? '#CBD5E1' : theme.borderHex }}
-              >
-                {c.kyt_quiz.answers.map((ans, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded bg-white border border-slate-300 px-2 py-1.5 flex items-start gap-1.5 text-[9.8px] text-slate-900 leading-snug keep-all"
-                  >
-                    <span
-                      className="shrink-0 w-3.5 h-3.5 rounded-sm text-white text-[9px] font-bold flex items-center justify-center mt-0.5 tabular-nums"
-                      style={{ backgroundColor: accentHex }}
-                    >
-                      {idx + 1}
-                    </span>
-                    <span className="font-medium">{ans}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div
-                className="grid grid-cols-3 gap-1.5 border-t pt-1.5"
-                style={{ borderColor: inkSaver ? '#CBD5E1' : theme.borderHex }}
-              >
-                {[1, 2, 3].map((num) => (
-                  <div
-                    key={num}
-                    className="rounded bg-white border border-dashed border-slate-500 px-2 py-2 flex items-center gap-1.5 text-[9.8px] text-slate-600 leading-snug keep-all"
-                  >
-                    <span
-                      className="shrink-0 w-3.5 h-3.5 rounded-sm text-white text-[9px] font-bold flex items-center justify-center tabular-nums"
-                      style={{ backgroundColor: accentHex }}
-                    >
-                      {num}
-                    </span>
-                    <span className="flex-1 border-b border-dotted border-slate-400 pb-0.5 text-[9.5px]">
-                      토의 기록:
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      // Dedicated SIF Official Analysis Read-Only Frame (High-Risk Work + Precursor Factor with 『...』 highlight)
+    // Compact Read-Only factual cause strip guaranteed in O·X, KYT, and TBM modes
+    const renderCompactLockedCauseStrip = () => {
       if (isSif) {
         const factorSegments = splitSifBracketHighlights(c.hazard_factor || c.direct_causes[0]);
         return (
           <div
-            className={`rounded-md border grid grid-cols-12 gap-2.5 ${ultraDense ? 'p-2' : 'p-2.5'}`}
+            className="rounded-md border px-2.5 py-1.5 flex items-start gap-2 text-[9.6px] keep-all"
             style={{
               backgroundColor: inkSaver ? '#F8FAFC' : '#FFFBEB',
               borderColor: inkSaver ? '#334155' : '#F59E0B',
             }}
           >
+            <span
+              className="inline-flex items-center gap-0.5 font-extrabold shrink-0 mt-0.5"
+              style={{ color: inkSaver ? '#0F172A' : '#92400E' }}
+            >
+              <Lock className="w-2.5 h-2.5 shrink-0" />
+              <span>SIF 유발요인 (원문)</span>
+            </span>
+            <p className="text-slate-900 leading-snug min-w-0 flex-1">
+              <strong className="font-bold text-slate-950">{c.high_risk_work || c.work_type}</strong>
+              {' — '}
+              {factorSegments.map((seg, i) =>
+                seg.emphasized ? (
+                  <strong
+                    key={i}
+                    className={`font-extrabold rounded-xs px-0.5 ${
+                      inkSaver
+                        ? 'underline decoration-slate-900'
+                        : 'bg-amber-200/80 text-amber-950'
+                    }`}
+                  >
+                    {seg.text}
+                  </strong>
+                ) : (
+                  <React.Fragment key={i}>{seg.text}</React.Fragment>
+                )
+              )}
+            </p>
+          </div>
+        );
+      }
+
+      const causeSummary = c.direct_causes.filter(Boolean).slice(0, 2).join(' · ');
+      return (
+        <div
+          className="rounded-md border px-2.5 py-1.5 flex items-start gap-2 text-[9.6px] keep-all"
+          style={{
+            backgroundColor: inkSaver ? '#FFFFFF' : theme.softBgHex,
+            borderColor: inkSaver ? '#334155' : theme.borderHex,
+          }}
+        >
+          <span
+            className="inline-flex items-center gap-0.5 font-extrabold shrink-0 mt-0.5"
+            style={{ color: inkSaver ? '#0F172A' : theme.accentTextHex }}
+          >
+            {isOfficialKosha ? (
+              <>
+                <Lock className="w-2.5 h-2.5 shrink-0" />
+                <span>발생원인 (원문 고정)</span>
+              </>
+            ) : (
+              <>
+                <FileText className="w-2.5 h-2.5 shrink-0" />
+                <span>발생원인 (표준 모델)</span>
+              </>
+            )}
+          </span>
+          <p className="font-medium text-slate-900 leading-snug min-w-0 flex-1">
+            {causeSummary}
+          </p>
+        </div>
+      );
+    };
+
+    const mCols = c.preventive_measures.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
+
+    const renderEditableMeasuresCards = (compactCards = false) => (
+      <div className={`grid ${mCols} gap-1.5`}>
+        {c.preventive_measures.map((measure, idx) => {
+          const isEditingThis = canInlineEdit && !isMobileViewport && editingMeasureIdx === idx;
+          return (
+            <div
+              key={idx}
+              className={`group relative flex items-start gap-2 rounded-md border bg-white ${
+                compactCards || translations || ultraDense || c.preventive_measures.length >= 5
+                  ? 'p-1.5'
+                  : 'p-2'
+              } ${
+                isMeasuresEdited
+                  ? inkSaver
+                    ? 'border-slate-700'
+                    : 'border-amber-300'
+                  : 'border-slate-300'
+              }`}
+            >
+              <span
+                className="shrink-0 w-4 h-4 rounded-sm text-white text-[9.5px] font-bold flex items-center justify-center mt-0.5 tabular-nums"
+                style={{ backgroundColor: accentHex }}
+              >
+                {idx + 1}
+              </span>
+
+              <div className="flex-1 min-w-0 keep-all">
+                {isEditingThis ? (
+                  <textarea
+                    autoFocus
+                    rows={2}
+                    value={measure}
+                    onChange={(e) => handleChangeMeasureText(idx, e.target.value)}
+                    onBlur={() => setEditingMeasureIdx(null)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) {
+                        e.preventDefault();
+                        setEditingMeasureIdx(null);
+                      }
+                    }}
+                    className="w-full rounded border border-orange-400 bg-orange-50/40 px-1.5 py-0.5 text-[10.2px] font-semibold text-slate-950 leading-snug focus:outline-none"
+                  />
+                ) : (
+                  <div
+                    onClick={() => {
+                      if (!canInlineEdit) return;
+                      if (isMobileViewport && onRequestMobileEdit) {
+                        onRequestMobileEdit('measures');
+                      } else {
+                        setEditingMeasureIdx(idx);
+                      }
+                    }}
+                    title={canInlineEdit ? '클릭하여 현장 여건에 맞게 수정·요약' : undefined}
+                    className={canInlineEdit ? 'cursor-text hover:bg-slate-50 rounded -mx-0.5 px-0.5' : ''}
+                  >
+                    <p
+                      className={`font-semibold text-slate-950 leading-snug ${
+                        compactCards || translations || ultraDense || c.preventive_measures.length >= 5
+                          ? 'text-[9.8px]'
+                          : 'text-[10.4px]'
+                      }`}
+                    >
+                      {measure}
+                    </p>
+                    {translations && translations.measures[idx] && (
+                      <p
+                        className="text-[9px] font-medium leading-tight mt-0.5"
+                        style={{ color: inkSaver ? '#334155' : theme.accentTextHex }}
+                      >
+                        {translations.measures[idx]}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {canInlineEdit && !isEditingThis && (
+                <div
+                  data-export-hide="true"
+                  className="no-print opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setEditingMeasureIdx(idx)}
+                    aria-label="대책 수정"
+                    className="p-0.5 text-slate-400 hover:text-slate-800 cursor-pointer"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  {c.preventive_measures.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMeasure(idx)}
+                      aria-label="대책 삭제"
+                      className="p-0.5 text-slate-400 hover:text-red-600 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+
+    const renderMeasuresToolbar = (titleText: string) => (
+      <div className="flex items-center justify-between gap-2 text-[10px]">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-extrabold text-slate-900">{titleText}</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-sm text-[9.2px] font-bold ${
+              isMeasuresEdited
+                ? inkSaver
+                  ? 'bg-slate-200 text-slate-950 border border-slate-700'
+                  : 'bg-amber-100 text-amber-900 border border-amber-300'
+                : 'bg-slate-100 text-slate-700 border border-slate-200'
+            }`}
+          >
+            {measuresSourceCaption}
+          </span>
+        </div>
+
+        {canInlineEdit && (
+          <div
+            data-export-hide="true"
+            className="no-print flex items-center gap-1.5 shrink-0"
+          >
+            {c.preventive_measures.length < 6 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isMobileViewport && onRequestMobileEdit) {
+                    onRequestMobileEdit('measures');
+                  } else {
+                    handleAddMeasure();
+                  }
+                }}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
+              >
+                <Plus className="w-2.5 h-2.5" />
+                <span>대책 추가</span>
+              </button>
+            )}
+            {isMeasuresEdited && onResetMeasures && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingMeasureIdx(null);
+                  onResetMeasures();
+                }}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
+              >
+                <RotateCcw className="w-2.5 h-2.5" />
+                <span>{resetMeasuresLabel}</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+
+    const renderLockedAnalysisFrame = () => {
+      // 1) 관행 vs 원칙 O·X 대조형: Read-Only 발생원인 압축 바 + 기인물 맞춤 X↔O 2쌍
+      if (isOxCompare) {
+        return (
+          <div className="space-y-1.5">
+            {renderCompactLockedCauseStrip()}
+            <div className="grid grid-cols-2 gap-2">
+              {c.ox_comparison.map((pair, idx) => (
+                <div
+                  key={idx}
+                  className="border rounded-md overflow-hidden flex flex-col"
+                  style={{ borderColor: inkSaver ? '#475569' : '#CBD5E1' }}
+                >
+                  <div
+                    className={`${inkSaver ? 'bg-white' : 'bg-red-50/80'} px-2.5 py-1.5`}
+                  >
+                    <div className="flex items-start gap-1.5">
+                      <span
+                        className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-sm text-[9.5px] font-bold mt-0.5 ${
+                          inkSaver
+                            ? 'bg-white text-slate-950 border border-slate-900'
+                            : 'bg-red-700 text-white'
+                        }`}
+                      >
+                        X
+                      </span>
+                      <p className="font-semibold text-slate-950 leading-snug keep-all text-[9.9px]">
+                        {pair.wrong}
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className={`border-t flex-1 ${
+                      inkSaver ? 'bg-slate-50 border-slate-300' : 'bg-emerald-50/80 border-slate-200'
+                    } px-2.5 py-1.5`}
+                  >
+                    <div className="flex items-start gap-1.5">
+                      <span
+                        className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-sm text-[9.5px] font-bold mt-0.5 ${
+                          inkSaver ? 'bg-slate-900 text-white' : 'bg-emerald-700 text-white'
+                        }`}
+                      >
+                        O
+                      </span>
+                      <p className="font-semibold text-slate-950 leading-snug keep-all text-[9.9px]">
+                        {pair.right}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      // 2) 위험예지 KYT 퀴즈형: Read-Only 발생원인 압축 바 + 단일 통합 KYT 질문/정답(편집 가능 안전조치)
+      //    (하단 중복 안전조치 그리드 제거로 텍스트 이중 중복 0건 + 인라인 편집 100% 연동)
+      if (isKytQuiz) {
+        const blankCount = Math.min(4, Math.max(3, c.preventive_measures.length));
+        return (
+          <div className="space-y-1.5">
+            {renderCompactLockedCauseStrip()}
+            <div
+              className={`rounded-md border space-y-1.5 ${ultraDense ? 'p-2' : 'p-2.5'}`}
+              style={{
+                backgroundColor: inkSaver ? '#FFFFFF' : theme.softBgHex,
+                borderColor: inkSaver ? '#334155' : theme.borderHex,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p
+                    className="text-[10.4px] font-extrabold tracking-tight"
+                    style={{ color: inkSaver ? '#0F172A' : theme.accentTextHex }}
+                  >
+                    현장 위험예지(KYT) 토의 질문 · 모범 안전조치
+                  </p>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold ${
+                      isMeasuresEdited
+                        ? inkSaver
+                          ? 'bg-slate-200 text-slate-950 border border-slate-700'
+                          : 'bg-amber-100 text-amber-900 border border-amber-300'
+                        : 'bg-white/90 text-slate-700 border border-slate-300'
+                    }`}
+                  >
+                    {measuresSourceCaption}
+                  </span>
+                </div>
+
+                <div data-export-hide="true" className="no-print flex items-center gap-1.5 shrink-0">
+                  {canInlineEdit && showKytAnswers && c.preventive_measures.length < 6 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isMobileViewport && onRequestMobileEdit) {
+                          onRequestMobileEdit('measures');
+                        } else {
+                          handleAddMeasure();
+                        }
+                      }}
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      <span>대책 추가</span>
+                    </button>
+                  )}
+                  {canInlineEdit && isMeasuresEdited && onResetMeasures && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingMeasureIdx(null);
+                        onResetMeasures();
+                      }}
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
+                    >
+                      <RotateCcw className="w-2.5 h-2.5" />
+                      <span>{resetMeasuresLabel}</span>
+                    </button>
+                  )}
+                  {!isPrintClone && onToggleKytAnswers && (
+                    <button
+                      type="button"
+                      onClick={onToggleKytAnswers}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-800 cursor-pointer"
+                    >
+                      {showKytAnswers ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      <span>{showKytAnswers ? '정답 숨기기' : '모범 정답 보기'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[11px] font-bold text-slate-950 leading-snug keep-all">
+                Q. {c.kyt_quiz.question}
+              </p>
+
+              <div
+                className="border-t pt-1.5"
+                style={{ borderColor: inkSaver ? '#CBD5E1' : theme.borderHex }}
+              >
+                {showKytAnswers ? (
+                  renderEditableMeasuresCards(true)
+                ) : (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {Array.from({ length: blankCount }, (_, i) => i + 1).map((num) => (
+                      <div
+                        key={num}
+                        className="rounded bg-white border border-dashed border-slate-500 px-2.5 py-2.5 flex items-center gap-2 text-[9.8px] text-slate-600 leading-snug keep-all"
+                      >
+                        <span
+                          className="shrink-0 w-4 h-4 rounded-sm text-white text-[9.2px] font-bold flex items-center justify-center tabular-nums"
+                          style={{ backgroundColor: accentHex }}
+                        >
+                          {num}
+                        </span>
+                        <span className="flex-1 border-b border-dotted border-slate-400 pb-0.5 text-[9.6px] font-medium">
+                          근로자 토의·핵심 안전조치 기록:
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // 3) 5분 TBM 실전형: Read-Only 발생원인 1줄 압축 바로 상단 공간을 절약해 하단 04 TBM 점검표 강조
+      if (isTbmHighlight) {
+        return renderCompactLockedCauseStrip();
+      }
+
+      // 4) 사고 재구성형 (심층 원인 분석 강조): SIF 원문 분석 또는 2열 직접원인·관리적 근본원인 확장 프레임
+      if (isSif) {
+        const factorSegments = splitSifBracketHighlights(c.hazard_factor || c.direct_causes[0]);
+        return (
+          <div
+            className={`rounded-md border grid grid-cols-12 gap-2.5 ${ultraDense ? 'p-2' : 'p-3'}`}
+            style={{
+              backgroundColor: inkSaver ? '#F8FAFC' : '#FFFBEB',
+              borderColor: inkSaver ? '#334155' : '#F59E0B',
+              borderWidth: '1.5px',
+            }}
+          >
             <div className="col-span-4 border-r pr-2.5" style={{ borderColor: inkSaver ? '#CBD5E1' : '#FDE68A' }}>
               <span
-                className="inline-flex items-center gap-1 text-[9.5px] font-extrabold mb-0.5"
+                className="inline-flex items-center gap-1 text-[9.8px] font-extrabold mb-1"
                 style={{ color: inkSaver ? '#0F172A' : '#92400E' }}
               >
                 <Lock className="w-2.5 h-2.5 shrink-0" />
                 <span>고위험작업·상황 (원문)</span>
               </span>
-              <p className="text-[10.4px] font-bold text-slate-950 leading-snug keep-all">
+              <p className="text-[10.8px] font-bold text-slate-950 leading-snug keep-all">
                 {c.high_risk_work || c.work_type}
               </p>
               {c.process && (
-                <p className="text-[9.2px] text-slate-600 mt-1 leading-tight keep-all">
+                <p className="text-[9.4px] text-slate-600 mt-1 leading-tight keep-all">
                   분류: {c.process}
                 </p>
               )}
             </div>
             <div className="col-span-8 min-w-0">
               <span
-                className="inline-flex items-center gap-1 text-[9.5px] font-extrabold mb-0.5"
+                className="inline-flex items-center gap-1 text-[9.8px] font-extrabold mb-1"
                 style={{ color: inkSaver ? '#0F172A' : '#92400E' }}
               >
                 <Lock className="w-2.5 h-2.5 shrink-0" />
                 <span>재해유발요인 (SIF Precursor · 공단 공식 원문)</span>
               </span>
-              <p className="text-[10.4px] text-slate-900 leading-snug keep-all">
+              <p className="text-[10.8px] text-slate-900 leading-snug keep-all">
                 {factorSegments.map((seg, i) =>
                   seg.emphasized ? (
                     <strong
@@ -528,24 +808,25 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
         );
       }
 
-      // Standard Cause Analysis Grid (Read-Only)
+      // 사고 재구성형 표준 2열 심층 원인 분석 그리드 (직접원인 원문 고정 + 관리적 근본원인 강조)
       return (
         <div className="grid grid-cols-12 gap-2">
           <div
-            className={`col-span-7 rounded-md border ${ultraDense ? 'p-2' : 'p-2.5'}`}
+            className={`col-span-7 rounded-md border ${ultraDense ? 'p-2' : 'p-3'}`}
             style={{
               backgroundColor: inkSaver ? '#FFFFFF' : theme.softBgHex,
-              borderColor: inkSaver ? '#334155' : theme.borderHex,
+              borderColor: inkSaver ? '#0F172A' : theme.borderHex,
+              borderWidth: '1.5px',
             }}
           >
             <p
-              className="text-[10.2px] font-extrabold mb-1 flex items-center gap-1"
+              className="text-[10.5px] font-extrabold mb-1.5 flex items-center gap-1"
               style={{ color: inkSaver ? '#0F172A' : theme.accentTextHex }}
             >
               {isOfficialKosha ? (
                 <>
                   <Lock className="w-2.5 h-2.5 shrink-0" />
-                  <span>핵심 위험요인 및 발생원인 (원문 고정)</span>
+                  <span>핵심 위험요인 및 발생원인 (원문 고정 · 직접원인)</span>
                 </>
               ) : (
                 <>
@@ -554,35 +835,35 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
                 </>
               )}
             </p>
-            <ul className="space-y-1">
+            <ul className="space-y-1.5">
               {c.direct_causes.map((cause, idx) => (
                 <li
                   key={idx}
-                  className="flex items-start gap-1.5 text-[10.1px] text-slate-900 leading-snug keep-all"
+                  className="flex items-start gap-1.5 text-[10.4px] text-slate-900 leading-snug keep-all"
                 >
                   <span
-                    className="shrink-0 w-3.5 h-3.5 rounded-sm text-white text-[9px] font-bold flex items-center justify-center mt-0.5 tabular-nums"
+                    className="shrink-0 w-4 h-4 rounded-sm text-white text-[9.2px] font-bold flex items-center justify-center mt-0.5 tabular-nums"
                     style={{ backgroundColor: accentHex }}
                   >
                     {idx + 1}
                   </span>
-                  <span className="font-medium">{cause}</span>
+                  <span className="font-semibold">{cause}</span>
                 </li>
               ))}
             </ul>
           </div>
           <div
             className={`col-span-5 rounded-md border border-slate-300 bg-slate-50 flex flex-col justify-between ${
-              ultraDense ? 'p-2' : 'p-2.5'
+              ultraDense ? 'p-2' : 'p-3'
             }`}
           >
             <div>
-              <p className="text-[10.2px] font-extrabold text-slate-800 mb-1">관리적 근본 원인</p>
-              <ul className="space-y-1">
+              <p className="text-[10.5px] font-extrabold text-slate-800 mb-1.5">관리적 근본 원인</p>
+              <ul className="space-y-1.5">
                 {c.root_causes.map((root, idx) => (
                   <li
                     key={idx}
-                    className="flex items-start gap-1.5 text-[9.9px] text-slate-800 leading-snug keep-all"
+                    className="flex items-start gap-1.5 text-[10.2px] text-slate-800 leading-snug keep-all"
                   >
                     <span className="font-bold text-slate-950">•</span>
                     <span>{root}</span>
@@ -591,7 +872,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
               </ul>
             </div>
             {!ultraDense && (
-              <div className="mt-1 pt-1 border-t border-slate-200 text-[9.4px] text-slate-700 leading-snug keep-all">
+              <div className="mt-1.5 pt-1.5 border-t border-slate-200 text-[9.6px] text-slate-700 leading-snug keep-all">
                 <span className="font-bold text-red-800">X 관행:</span> {c.ox_comparison[0].wrong}
               </div>
             )}
@@ -600,14 +881,12 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
       );
     };
 
-    const mCols = c.preventive_measures.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
-
     return (
       <section className={dense ? 'space-y-1.5' : 'space-y-2'}>
         <div className="flex items-center justify-between border-b border-slate-300 pb-1 gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
             <h2 className="text-[12.8px] font-bold text-slate-950 tracking-tight">
-              02. 핵심 원인 분석 및 {isSif ? '위험성감소대책' : '동종재해 예방 안전조치'}
+              02. {isKytQuiz ? '위험예지(KYT) 토의 및 핵심 안전조치' : `핵심 원인 분석 및 ${isSif ? '위험성감소대책' : '동종재해 예방 안전조치'}`}
             </h2>
             {translations && (
               <span className="inline-flex items-center gap-0.5 text-[9.8px] font-bold text-slate-700 shrink-0">
@@ -646,172 +925,18 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
           )}
         </div>
 
-        {/* Locked Factual Cause / SIF Block */}
+        {/* Locked Factual Cause / SIF / O·X / Unified KYT Block */}
         {renderLockedAnalysisFrame()}
 
-        {/* Editable Preventive / SIF Risk-Reduction Measures Frame */}
-        <div className="space-y-1">
-          <div className="flex items-center justify-between gap-2 text-[10px]">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-extrabold text-slate-900">
-                {isSif ? 'SIF 위험성감소대책' : '동종재해 예방 핵심 안전조치'}
-              </span>
-              <span
-                className={`px-1.5 py-0.5 rounded-sm text-[9.2px] font-bold ${
-                  isMeasuresEdited
-                    ? inkSaver
-                      ? 'bg-slate-200 text-slate-950 border border-slate-700'
-                      : 'bg-amber-100 text-amber-900 border border-amber-300'
-                    : 'bg-slate-100 text-slate-700 border border-slate-200'
-                }`}
-              >
-                {measuresSourceCaption}
-              </span>
-            </div>
-
-            {canInlineEdit && (
-              <div
-                data-export-hide="true"
-                className="no-print flex items-center gap-1.5 shrink-0"
-              >
-                {c.preventive_measures.length < 6 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isMobileViewport && onRequestMobileEdit) {
-                        onRequestMobileEdit('measures');
-                      } else {
-                        handleAddMeasure();
-                      }
-                    }}
-                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
-                  >
-                    <Plus className="w-2.5 h-2.5" />
-                    <span>대책 추가</span>
-                  </button>
-                )}
-                {isMeasuresEdited && onResetMeasures && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingMeasureIdx(null);
-                      onResetMeasures();
-                    }}
-                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
-                  >
-                    <RotateCcw className="w-2.5 h-2.5" />
-                    <span>{isOfficialKosha ? '↺ 공단 원문 복원' : '↺ 표준 가이드 복원'}</span>
-                  </button>
-                )}
-              </div>
+        {/* Editable Preventive Measures Frame (omitted in KYT mode because KYT block already unifies & edits measures directly!) */}
+        {!isKytQuiz && (
+          <div className="space-y-1">
+            {renderMeasuresToolbar(
+              isSif ? 'SIF 위험성감소대책' : '동종재해 예방 핵심 안전조치'
             )}
+            {renderEditableMeasuresCards(isTbmHighlight && dense)}
           </div>
-
-          <div className={`grid ${mCols} gap-1.5`}>
-            {c.preventive_measures.map((measure, idx) => {
-              const isEditingThis = canInlineEdit && !isMobileViewport && editingMeasureIdx === idx;
-              return (
-                <div
-                  key={idx}
-                  className={`group relative flex items-start gap-2 rounded-md border bg-white ${
-                    translations || ultraDense || c.preventive_measures.length >= 5
-                      ? 'p-1.5'
-                      : 'p-2'
-                  } ${
-                    isMeasuresEdited
-                      ? inkSaver
-                        ? 'border-slate-700'
-                        : 'border-amber-300'
-                      : 'border-slate-300'
-                  }`}
-                >
-                  <span
-                    className="shrink-0 w-4 h-4 rounded-sm text-white text-[9.5px] font-bold flex items-center justify-center mt-0.5 tabular-nums"
-                    style={{ backgroundColor: accentHex }}
-                  >
-                    {idx + 1}
-                  </span>
-
-                  <div className="flex-1 min-w-0 keep-all">
-                    {isEditingThis ? (
-                      <textarea
-                        autoFocus
-                        rows={2}
-                        value={measure}
-                        onChange={(e) => handleChangeMeasureText(idx, e.target.value)}
-                        onBlur={() => setEditingMeasureIdx(null)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) {
-                            e.preventDefault();
-                            setEditingMeasureIdx(null);
-                          }
-                        }}
-                        className="w-full rounded border border-orange-400 bg-orange-50/40 px-1.5 py-0.5 text-[10.2px] font-semibold text-slate-950 leading-snug focus:outline-none"
-                      />
-                    ) : (
-                      <div
-                        onClick={() => {
-                          if (!canInlineEdit) return;
-                          if (isMobileViewport && onRequestMobileEdit) {
-                            onRequestMobileEdit('measures');
-                          } else {
-                            setEditingMeasureIdx(idx);
-                          }
-                        }}
-                        title={canInlineEdit ? '클릭하여 현장 여건에 맞게 수정·요약' : undefined}
-                        className={canInlineEdit ? 'cursor-text hover:bg-slate-50 rounded -mx-0.5 px-0.5' : ''}
-                      >
-                        <p
-                          className={`font-semibold text-slate-950 leading-snug ${
-                            translations || ultraDense || c.preventive_measures.length >= 5
-                              ? 'text-[9.8px]'
-                              : 'text-[10.4px]'
-                          }`}
-                        >
-                          {measure}
-                        </p>
-                        {translations && translations.measures[idx] && (
-                          <p
-                            className="text-[9px] font-medium leading-tight mt-0.5"
-                            style={{ color: inkSaver ? '#334155' : theme.accentTextHex }}
-                          >
-                            {translations.measures[idx]}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {canInlineEdit && !isEditingThis && (
-                    <div
-                      data-export-hide="true"
-                      className="no-print opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setEditingMeasureIdx(idx)}
-                        aria-label="대책 수정"
-                        className="p-0.5 text-slate-400 hover:text-slate-800 cursor-pointer"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      {c.preventive_measures.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMeasure(idx)}
-                          aria-label="대책 삭제"
-                          className="p-0.5 text-slate-400 hover:text-red-600 cursor-pointer"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        )}
       </section>
     );
   };
@@ -917,208 +1042,255 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
   // =========================================================================
   // 04. 작업 전 5분 TBM 현장 실전 점검표 [현장 맞춤 인라인 편집 허용]
   // =========================================================================
-  const renderSection04TbmChecklist = () => (
-    <section className="space-y-1">
-      <div className="flex items-center justify-between border-b border-slate-300 pb-1 gap-2">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {isTbmHighlight ? (
-            <ClipboardCheck className="w-4 h-4 shrink-0" style={{ color: accentHex }} />
-          ) : (
-            <CheckSquare className="w-3.5 h-3.5 text-slate-900 shrink-0" />
-          )}
-          <h2 className="text-[12.8px] font-bold text-slate-950 tracking-tight">
-            04. 작업 전 5분 TBM 현장 실전 점검표
-          </h2>
-          <span
-            className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold ${
-              isTbmEdited
-                ? inkSaver
-                  ? 'bg-slate-200 text-slate-950 border border-slate-700'
-                  : 'bg-amber-100 text-amber-900 border border-amber-300'
-                : 'bg-slate-100 text-slate-700 border border-slate-200'
-            }`}
-          >
-            {tbmSourceCaption}
-          </span>
-        </div>
+  const renderSection04TbmChecklist = () => {
+    const showCompactTop3 = isReconstruction && !isTbmEdited && c.tbm_checklist.length > 3;
+    const visibleTbmItems = showCompactTop3 ? c.tbm_checklist.slice(0, 3) : c.tbm_checklist;
 
-        <div className="flex items-center gap-1.5">
-          {canInlineEdit && (
-            <div data-export-hide="true" className="no-print flex items-center gap-1">
-              {c.tbm_checklist.length < 7 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isMobileViewport && onRequestMobileEdit) {
-                      onRequestMobileEdit('tbm');
-                    } else {
-                      handleAddTbm();
-                    }
-                  }}
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
-                >
-                  <Plus className="w-2.5 h-2.5" />
-                  <span>점검 추가</span>
-                </button>
-              )}
-              {isTbmEdited && onResetTbm && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingTbmIdx(null);
-                    onResetTbm();
-                  }}
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
-                >
-                  <RotateCcw className="w-2.5 h-2.5" />
-                  <span>{isOfficialKosha ? '↺ 원문 복원' : '↺ 표준 복원'}</span>
-                </button>
-              )}
-            </div>
-          )}
-          <span className="text-[9.8px] font-medium text-slate-600 hidden sm:inline">
-            이상 시 즉시 작업 중지
-          </span>
-        </div>
-      </div>
-
-      <div
-        className="rounded-md overflow-hidden border"
-        style={{
-          borderColor: inkSaver ? '#0F172A' : isTbmHighlight ? accentHex : '#CBD5E1',
-          borderWidth: isTbmHighlight || inkSaver ? '1.5px' : '1px',
-        }}
-      >
-        <table className="w-full text-left border-collapse keep-all">
-          <thead>
-            <tr
-              className={`text-[9.8px] ${inkSaver ? 'text-slate-950 border-b border-slate-900' : 'text-white'}`}
-              style={{
-                backgroundColor: inkSaver
-                  ? '#F1F5F9'
-                  : isTbmHighlight
-                    ? accentHex
-                    : '#0F172A',
-              }}
+    return (
+      <section className={isTbmHighlight ? 'space-y-1.5' : 'space-y-1'}>
+        <div className="flex items-center justify-between border-b border-slate-300 pb-1 gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {isTbmHighlight ? (
+              <ClipboardCheck className="w-4 h-4 shrink-0" style={{ color: accentHex }} />
+            ) : (
+              <CheckSquare className="w-3.5 h-3.5 text-slate-900 shrink-0" />
+            )}
+            <h2 className="text-[12.8px] font-bold text-slate-950 tracking-tight">
+              04. 작업 전 5분 TBM 현장 실전 점검표
+            </h2>
+            {isTbmHighlight && (
+              <span
+                className="px-1.5 py-0.5 rounded-sm text-[9px] font-extrabold text-white shrink-0"
+                style={{ backgroundColor: inkSaver ? '#0F172A' : accentHex }}
+              >
+                현장 즉시 점검 중심
+              </span>
+            )}
+            {showCompactTop3 && (
+              <span className="px-1.5 py-0.5 rounded-sm text-[9px] font-bold bg-slate-800 text-white shrink-0">
+                핵심 3항목 요약
+              </span>
+            )}
+            <span
+              className={`px-1.5 py-0.5 rounded-sm text-[9px] font-bold ${
+                isTbmEdited
+                  ? inkSaver
+                    ? 'bg-slate-200 text-slate-950 border border-slate-700'
+                    : 'bg-amber-100 text-amber-900 border border-amber-300'
+                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+              }`}
             >
-              <th className="py-1 px-2 w-10 text-center font-bold">번호</th>
-              <th className="py-1 px-2 font-bold">작업 전 필수 안전점검 항목</th>
-              <th className="py-1 px-2 w-28 text-center font-bold">점검 결과</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {c.tbm_checklist.map((item, idx) => {
-              const isEditingRow = canInlineEdit && !isMobileViewport && editingTbmIdx === idx;
-              const compactRow = ultraDense || c.tbm_checklist.length >= 6;
-              return (
-                <tr
-                  key={idx}
-                  className={`group ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
+              {tbmSourceCaption}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {canInlineEdit && (
+              <div data-export-hide="true" className="no-print flex items-center gap-1">
+                {c.tbm_checklist.length < 7 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isMobileViewport && onRequestMobileEdit) {
+                        onRequestMobileEdit('tbm');
+                      } else {
+                        handleAddTbm();
+                      }
+                    }}
+                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[9.5px] font-bold text-slate-700 cursor-pointer"
+                  >
+                    <Plus className="w-2.5 h-2.5" />
+                    <span>점검 추가</span>
+                  </button>
+                )}
+                {isTbmEdited && onResetTbm && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingTbmIdx(null);
+                      onResetTbm();
+                    }}
+                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 hover:bg-orange-100 text-[9.5px] font-bold text-orange-800 cursor-pointer"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    <span>↺ 표준 복원</span>
+                  </button>
+                )}
+              </div>
+            )}
+            <span
+              className={`hidden sm:inline ${
+                isTbmHighlight
+                  ? inkSaver
+                    ? 'px-1.5 py-0.5 rounded-sm border border-slate-900 text-[9.4px] font-extrabold text-slate-950'
+                    : 'px-1.5 py-0.5 rounded-sm bg-red-50 border border-red-300 text-[9.4px] font-extrabold text-red-800'
+                  : 'text-[9.8px] font-medium text-slate-600'
+              }`}
+            >
+              이상 시 즉시 작업 중지
+            </span>
+          </div>
+        </div>
+
+        <div
+          className="rounded-md overflow-hidden border"
+          style={{
+            borderColor: inkSaver ? '#0F172A' : isTbmHighlight ? accentHex : '#CBD5E1',
+            borderWidth: isTbmHighlight ? '2px' : inkSaver ? '1.5px' : '1px',
+          }}
+        >
+          <table className="w-full text-left border-collapse keep-all">
+            <thead>
+              <tr
+                className={`${isTbmHighlight ? 'text-[10.2px]' : 'text-[9.8px]'} ${
+                  inkSaver ? 'text-slate-950 border-b border-slate-900' : 'text-white'
+                }`}
+                style={{
+                  backgroundColor: inkSaver
+                    ? '#F1F5F9'
+                    : isTbmHighlight
+                      ? accentHex
+                      : '#0F172A',
+                }}
+              >
+                <th className={`${isTbmHighlight ? 'py-1.5' : 'py-1'} px-2 w-10 text-center font-bold`}>번호</th>
+                <th className={`${isTbmHighlight ? 'py-1.5' : 'py-1'} px-2 font-bold`}>
+                  작업 전 필수 안전점검 항목
+                </th>
+                <th
+                  className={`${isTbmHighlight ? 'py-1.5 w-36' : 'py-1 w-28'} px-2 text-center font-bold`}
                 >
-                  <td
-                    className={`px-2 text-center font-bold text-slate-800 tabular-nums ${
-                      compactRow ? 'py-1 text-[9.8px]' : 'py-1.5 text-[10.2px]'
-                    }`}
+                  점검 결과
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {visibleTbmItems.map((item, idx) => {
+                const isEditingRow = canInlineEdit && !isMobileViewport && editingTbmIdx === idx;
+                const compactRow = ultraDense || visibleTbmItems.length >= 6 || showCompactTop3;
+                const heroRow = isTbmHighlight && !ultraDense && visibleTbmItems.length <= 5;
+                return (
+                  <tr
+                    key={idx}
+                    className={`group ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
                   >
-                    0{idx + 1}
-                  </td>
-                  <td
-                    className={`px-2 font-semibold text-slate-950 leading-snug ${
-                      compactRow ? 'py-1 text-[9.9px]' : 'py-1.5 text-[10.3px]'
-                    }`}
-                  >
-                    {isEditingRow ? (
-                      <input
-                        type="text"
-                        autoFocus
-                        value={item}
-                        onChange={(e) => handleChangeTbmText(idx, e.target.value)}
-                        onBlur={() => setEditingTbmIdx(null)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === 'Escape') {
-                            e.preventDefault();
-                            setEditingTbmIdx(null);
-                          }
-                        }}
-                        className="w-full rounded border border-orange-400 bg-orange-50/40 px-1.5 py-0.5 text-[10.2px] font-semibold text-slate-950 focus:outline-none"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span
-                          onClick={() => {
-                            if (!canInlineEdit) return;
-                            if (isMobileViewport && onRequestMobileEdit) {
-                              onRequestMobileEdit('tbm');
-                            } else {
-                              setEditingTbmIdx(idx);
+                    <td
+                      className={`px-2 text-center font-bold text-slate-800 tabular-nums ${
+                        heroRow
+                          ? 'py-2 text-[10.5px]'
+                          : compactRow
+                            ? 'py-1 text-[9.8px]'
+                            : 'py-1.5 text-[10.2px]'
+                      }`}
+                    >
+                      0{idx + 1}
+                    </td>
+                    <td
+                      className={`px-2 font-semibold text-slate-950 leading-snug ${
+                        heroRow
+                          ? 'py-2 text-[10.6px]'
+                          : compactRow
+                            ? 'py-1 text-[9.9px]'
+                            : 'py-1.5 text-[10.3px]'
+                      }`}
+                    >
+                      {isEditingRow ? (
+                        <input
+                          type="text"
+                          autoFocus
+                          value={item}
+                          onChange={(e) => handleChangeTbmText(idx, e.target.value)}
+                          onBlur={() => setEditingTbmIdx(null)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditingTbmIdx(null);
                             }
                           }}
-                          title={canInlineEdit ? '클릭하여 점검항목 수정' : undefined}
-                          className={canInlineEdit ? 'cursor-text hover:underline decoration-dotted' : ''}
-                        >
-                          {item}
-                        </span>
-                        {canInlineEdit && (
+                          className="w-full rounded border border-orange-400 bg-orange-50/40 px-1.5 py-0.5 text-[10.2px] font-semibold text-slate-950 focus:outline-none"
+                        />
+                      ) : (
+                        <div className="flex items-center justify-between gap-1.5">
                           <span
-                            data-export-hide="true"
-                            className="no-print opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 shrink-0"
+                            onClick={() => {
+                              if (!canInlineEdit) return;
+                              if (isMobileViewport && onRequestMobileEdit) {
+                                onRequestMobileEdit('tbm');
+                              } else {
+                                setEditingTbmIdx(idx);
+                              }
+                            }}
+                            title={canInlineEdit ? '클릭하여 점검항목 수정' : undefined}
+                            className={canInlineEdit ? 'cursor-text hover:underline decoration-dotted' : ''}
                           >
-                            <button
-                              type="button"
-                              onClick={() => setEditingTbmIdx(idx)}
-                              aria-label="점검항목 수정"
-                              className="p-0.5 text-slate-400 hover:text-slate-800 cursor-pointer"
+                            {item}
+                          </span>
+                          {canInlineEdit && (
+                            <span
+                              data-export-hide="true"
+                              className="no-print opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 shrink-0"
                             >
-                              <Pencil className="w-2.5 h-2.5" />
-                            </button>
-                            {c.tbm_checklist.length > 1 && (
                               <button
                                 type="button"
-                                onClick={() => handleRemoveTbm(idx)}
-                                aria-label="점검항목 삭제"
-                                className="p-0.5 text-slate-400 hover:text-red-600 cursor-pointer"
+                                onClick={() => setEditingTbmIdx(idx)}
+                                aria-label="점검항목 수정"
+                                className="p-0.5 text-slate-400 hover:text-slate-800 cursor-pointer"
                               >
-                                <X className="w-2.5 h-2.5" />
+                                <Pencil className="w-2.5 h-2.5" />
                               </button>
-                            )}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td
-                    className={`px-2 text-center text-slate-800 font-semibold whitespace-nowrap ${
-                      compactRow ? 'py-1 text-[9.6px]' : 'py-1.5 text-[10px]'
-                    }`}
-                  >
-                    □ 양호 &nbsp; □ 조치
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                              {c.tbm_checklist.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveTbm(idx)}
+                                  aria-label="점검항목 삭제"
+                                  className="p-0.5 text-slate-400 hover:text-red-600 cursor-pointer"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td
+                      className={`px-2 text-center text-slate-800 font-semibold whitespace-nowrap ${
+                        heroRow
+                          ? 'py-2 text-[10.4px]'
+                          : compactRow
+                            ? 'py-1 text-[9.6px]'
+                            : 'py-1.5 text-[10px]'
+                      }`}
+                    >
+                      {isTbmHighlight ? '☐ 양호  ☐ 조치필요' : '□ 양호 \u00A0 □ 조치'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
 
-        {isTbmHighlight && (
-          <div
-            className="border-t px-3 py-1 flex items-center justify-between text-[9.8px] font-bold tabular-nums"
-            style={{
-              backgroundColor: inkSaver ? '#F8FAFC' : theme.softBgHex,
-              borderColor: inkSaver ? '#334155' : theme.borderHex,
-              color: inkSaver ? '#0F172A' : theme.accentTextHex,
-            }}
-          >
-            <span>점검자 확인란</span>
-            <div className="flex items-center gap-4 text-slate-900 font-semibold">
-              <span>점검자(반장): ______________ (인)</span>
-              <span>확인 시각: ____ : ____</span>
-              <span>이상 조치: □ 없음  □ 완료</span>
+          {isTbmHighlight && (
+            <div
+              className="border-t px-3 py-1.5 flex items-center justify-between text-[10px] font-bold tabular-nums"
+              style={{
+                backgroundColor: inkSaver ? '#F8FAFC' : theme.softBgHex,
+                borderColor: inkSaver ? '#334155' : theme.borderHex,
+                color: inkSaver ? '#0F172A' : theme.accentTextHex,
+              }}
+            >
+              <span>점검자 확인란</span>
+              <div className="flex items-center gap-4 text-slate-900 font-semibold">
+                <span>점검자(반장): ______________ (인)</span>
+                <span>확인 시각: ____ : ____</span>
+                <span>이상 조치: ☐ 없음  ☐ 완료</span>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-    </section>
-  );
+          )}
+        </div>
+      </section>
+    );
+  };
 
   const allowWebAutoHeight = !isPrintClone && expandFullOverview;
 
@@ -1404,14 +1576,7 @@ export const OpsSheetView: React.FC<OpsSheetViewProps> = React.memo(({
             </span>
           </div>
           <span className="shrink-0 font-semibold">
-            {isOfficialKosha
-              ? material.isCustomEdited
-                ? '대책: 공단 권고안 기반 · 현장 맞춤 반영'
-                : '사실·대책: 공단 공식 원문 기준'
-              : material.isCustomEdited
-                ? '대책: 표준 가이드 기반 · 현장 맞춤 반영'
-                : '사실·대책: 표준 교육모델 기준'}{' '}
-            (A4)
+            {getFooterSourceCaption(c, Boolean(material.isCustomEdited))} (A4)
           </span>
         </footer>
       </div>
