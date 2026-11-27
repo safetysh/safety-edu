@@ -1303,8 +1303,12 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     ))}
                   </div>
 
-                  {/* 5-per-page Compact Result Cards (zero inner overflow scroll trap) */}
-                  <div className="space-y-1.5">
+                  {/* 5-per-page Fixed-Height Compact Result Cards (exact px math, immune to rem zoom, zero button shift) */}
+                  <div
+                    className={`flex flex-col gap-[6px] ${
+                      totalSearchPages > 1 ? 'h-[394px]' : ''
+                    }`}
+                  >
                     {visibleSearchResults.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center text-[12px] text-slate-500">
                         검색 조건과 일치하는 사례가 없습니다.
@@ -1323,14 +1327,15 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                             key={item.id}
                             type="button"
                             onClick={() => handleSelectSearchCase(item)}
-                            className={`w-full text-left rounded-lg border p-2.5 transition-all cursor-pointer keep-all ${
+                            title={`${item.industry} · ${item.hazard_type} · ${item.equipment} — ${item.title}`}
+                            className={`w-full h-[74px] shrink-0 text-left rounded-lg border px-[10px] py-[7px] flex flex-col justify-center overflow-hidden transition-all cursor-pointer keep-all ${
                               isSelected
                                 ? 'border-orange-500 bg-orange-50/80 ring-1 ring-orange-500'
                                 : 'border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50/70'
                             }`}
                           >
-                            <div className="flex items-center justify-between gap-1.5 mb-1">
-                              <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                            <div className="flex items-center justify-between gap-1.5 h-[18px] mb-[4px] shrink-0">
+                              <div className="flex items-center gap-1 min-w-0 flex-nowrap overflow-hidden">
                                 {isSelected && (
                                   <span className="px-1.5 py-0.5 rounded-sm bg-emerald-700 text-white text-[9px] font-extrabold shrink-0">
                                     ✓ 적용 중
@@ -1357,7 +1362,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11.8px] font-bold text-slate-900 leading-snug line-clamp-2">
+                            <p className="text-[11.8px] font-bold text-slate-900 leading-[1.35] line-clamp-2">
                               {item.title}
                             </p>
                           </button>
@@ -1375,12 +1380,12 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                         onClick={() =>
                           setSearchPage((p) => Math.max(1, Math.min(p, totalSearchPages) - 1))
                         }
-                        className="min-h-[38px] lg:min-h-0 inline-flex items-center gap-0.5 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-[11.5px] font-bold text-slate-800 cursor-pointer"
+                        className="min-h-[44px] lg:min-h-[32px] inline-flex items-center gap-0.5 px-3 lg:px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-[12px] lg:text-[11.5px] font-bold text-slate-800 cursor-pointer"
                       >
                         <ChevronLeft className="w-3.5 h-3.5" />
                         <span>이전</span>
                       </button>
-                      <span className="text-[11.2px] font-extrabold text-slate-700 tabular-nums">
+                      <span className="text-[11.5px] font-extrabold text-slate-700 tabular-nums">
                         {safeSearchPage} / {totalSearchPages}
                       </span>
                       <button
@@ -1391,7 +1396,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                             Math.min(totalSearchPages, Math.min(p, totalSearchPages) + 1)
                           )
                         }
-                        className="min-h-[38px] lg:min-h-0 inline-flex items-center gap-0.5 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-[11.5px] font-bold text-slate-800 cursor-pointer"
+                        className="min-h-[44px] lg:min-h-[32px] inline-flex items-center gap-0.5 px-3 lg:px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-[12px] lg:text-[11.5px] font-bold text-slate-800 cursor-pointer"
                       >
                         <span>다음</span>
                         <ChevronRight className="w-3.5 h-3.5" />
