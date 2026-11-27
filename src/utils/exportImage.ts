@@ -4,20 +4,79 @@ function sanitizeName(text: string): string {
   return text.replace(/[\\/:*?"<>|\s·]+/g, '_').replace(/_+/g, '_').slice(0, 40);
 }
 
-let cachedFontEmbedCSSPromise: Promise<string | undefined> | null = null;
+let cachedFontEmbedCSSPromise: Promise<string | null> | null = null;
 
 async function getCachedFontEmbedCSS(
   node: HTMLElement,
-  getFontEmbedCSS: typeof import('html-to-image').getFontEmbedCSS
-): Promise<string | undefined> {
+  getFontEmbedCSS: typeof import('html-to-image').getFontEmbedCSS,
+  timeoutMs = 2500
+): Promise<string | null> {
   if (!cachedFontEmbedCSSPromise) {
     const rootTarget = document.body ?? node;
-    cachedFontEmbedCSSPromise = getFontEmbedCSS(rootTarget).catch(() => {
-      cachedFontEmbedCSSPromise = null;
-      return undefined;
-    });
+    const timeoutPromise = new Promise<null>((resolve) =>
+      window.setTimeout(() => resolve(null), timeoutMs)
+    );
+    cachedFontEmbedCSSPromise = Promise.race([
+      getFontEmbedCSS(rootTarget).catch(() => null),
+      timeoutPromise,
+    ]);
   }
   return cachedFontEmbedCSSPromise;
+}
+
+export function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /iPad|iPhone|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
+function isSafariWebKit(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    isIosDevice() ||
+    (/Safari/i.test(ua) && !/Chrome|Chromium|Android|Edg|OPR/i.test(ua))
+  );
+}
+
+function isMobileCaptureEnv(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    isIosDevice() ||
+    /Android|Mobile|Silk|Kindle|BlackBerry|Opera Mini|IEMobile/i.test(ua) ||
+    (typeof window !== 'undefined' && window.innerWidth < 1024)
+  );
+}
+
+const SYSFONT_STYLE_ID = 'safety-edu-export-sysfont-style';
+
+/**
+ * When capturing with `skipFonts: true` (mobile / WebKit / offline fallback), html-to-image copies
+ * `getComputedStyle(el).width` (measured in Google Fonts Noto Sans KR) onto the cloned SVG `<foreignObject>`,
+ * which then renders in the OS system font and causes badges/headings to wrap and clip.
+ * Temporarily aligning `node` to the OS system sans-serif during capture guarantees exact 1:1 metrics.
+ */
+async function withSystemFontMetrics<T>(node: HTMLElement, task: () => Promise<T>): Promise<T> {
+  let styleEl = document.getElementById(SYSFONT_STYLE_ID) as HTMLStyleElement | null;
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = SYSFONT_STYLE_ID;
+    styleEl.textContent =
+      '[data-export-sysfont="true"], [data-export-sysfont="true"] * { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Roboto", sans-serif !important; }';
+    document.head.appendChild(styleEl);
+  }
+  node.setAttribute('data-export-sysfont', 'true');
+  // Force synchronous reflow so getComputedStyle reflects the exact system font metrics
+  void node.offsetHeight;
+  try {
+    return await task();
+  } finally {
+    node.removeAttribute('data-export-sysfont');
+  }
 }
 
 async function captureNodeDataUrl(
@@ -61,30 +120,80 @@ async function captureNodeDataUrl(
     return true;
   };
 
-  const fontEmbedCSS = await getCachedFontEmbedCSS(node, getFontEmbedCSS);
+  const webkit = isSafariWebKit();
 
-  try {
-    return await toPng(node, {
-      cacheBust: true,
+  // On iOS Safari / WebKit, align metrics to Apple SD Gothic Neo / system sans-serif during capture
+  // and run a warm-up pass so WebKit finishes decoding embedded SVG / data-URL QR images into foreignObject.
+  if (webkit) {
+    const webkitOpts = {
+      cacheBust: false,
       backgroundColor: '#ffffff',
       filter: exportFilter,
+      skipFonts: true,
       ...sizeOptions,
-      ...(fontEmbedCSS !== undefined ? { fontEmbedCSS } : {}),
+    };
+    return await withSystemFontMetrics(node, async () => {
+      try {
+        await toPng(node, webkitOpts);
+      } catch {
+        // ignore warm-up failure and proceed to main pass
+      }
+      return await toPng(node, webkitOpts);
     });
-  } catch {
-    return await toPng(node, {
-      cacheBust: true,
+  }
+
+  // On mobile Android / tablets (<1024px), align metrics to native OS Korean sans-serif fonts
+  // without downloading ~100 Google Font WOFF2 subsets, avoiding 5~10s stalls, WebView OOMs,
+  // and Web Share API user-gesture expiration.
+  if (isMobileCaptureEnv()) {
+    return await withSystemFontMetrics(node, () =>
+      toPng(node, {
+        cacheBust: false,
+        backgroundColor: '#ffffff',
+        filter: exportFilter,
+        skipFonts: true,
+        ...sizeOptions,
+      })
+    );
+  }
+
+  // Desktop (>=1024px): try cached webfont embedding with a 2.5s cap; if unavailable/timed out,
+  // immediately fall back to metric-aligned skipFonts capture so fonts are never re-fetched twice.
+  const fontEmbedCSS = await getCachedFontEmbedCSS(node, getFontEmbedCSS);
+
+  if (fontEmbedCSS) {
+    try {
+      const first = await toPng(node, {
+        cacheBust: false,
+        backgroundColor: '#ffffff',
+        filter: exportFilter,
+        ...sizeOptions,
+        fontEmbedCSS,
+      });
+      if (first && first.length > 4000) {
+        return first;
+      }
+    } catch {
+      // Fallback to metric-aligned skipFonts mode below
+    }
+  }
+
+  return await withSystemFontMetrics(node, () =>
+    toPng(node, {
+      cacheBust: false,
       backgroundColor: '#ffffff',
       filter: exportFilter,
       ...sizeOptions,
       skipFonts: true,
-    });
-  }
+    })
+  );
 }
 
 export function isInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return /KAKAOTALK|NAVER|FBAN|FBAV|Instagram|Line\/|BAND\//i.test(navigator.userAgent || '');
+  return /KAKAOTALK|NAVER|FBAN|FBAV|Instagram|Line\/|BAND\/|DaumApps|GSA\/|wv\)/i.test(
+    navigator.userAgent || ''
+  );
 }
 
 export interface CapturedPngAsset {
@@ -111,10 +220,28 @@ export async function captureNodeAsPngResult(
   return { dataUrl, blob, file, fileName };
 }
 
+export function triggerBlobDownload(blob: Blob, fileName: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = fileName;
+  link.href = objectUrl;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  // Keep ObjectURL alive briefly so mobile browsers finish reading the blob
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15_000);
+}
+
 export function triggerDownload(href: string, fileName: string): void {
+  if (href.startsWith('data:')) {
+    triggerBlobDownload(dataUrlToBlob(href), fileName);
+    return;
+  }
   const link = document.createElement('a');
   link.download = fileName;
   link.href = href;
+  link.rel = 'noopener';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -328,9 +455,7 @@ export async function downloadCardNewsZip(
 
   const blob = await zip.generateAsync({ type: 'blob' });
   const fileName = `카드뉴스4컷_${sanitizeName(workType)}_${dateStr}.zip`;
-  const url = URL.createObjectURL(blob);
-  triggerDownload(url, fileName);
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(blob, fileName);
   return fileName;
 }
 
@@ -409,7 +534,5 @@ export function downloadSampleCaseTemplate(): void {
   const blob = new Blob([JSON.stringify(sample, null, 2)], {
     type: 'application/json;charset=utf-8',
   });
-  const url = URL.createObjectURL(blob);
-  triggerDownload(url, '사고사례_추가_샘플양식.json');
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(blob, '사고사례_추가_샘플양식.json');
 }

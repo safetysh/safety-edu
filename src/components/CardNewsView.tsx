@@ -13,9 +13,14 @@ import {
 } from '../data/multilingualDict';
 import { SEASONAL_RISKS } from '../data/seasonalRisks';
 import {
+  CapturedPngAsset,
+  captureNodeAsPngResult,
   copyNodeAsPngToClipboard,
   downloadCardNewsZip,
   downloadNodeAsPng,
+  isInAppBrowser,
+  isIosDevice,
+  triggerBlobDownload,
 } from '../utils/exportImage';
 import {
   fitFactualOverviewForA4,
@@ -29,7 +34,9 @@ interface CardNewsViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
   legalRef?: ResolvedLegalReference | null;
+  isMobileViewport?: boolean;
   onNotify: (type: 'success' | 'error', message: string) => void;
+  onOpenImageFallback?: (asset: CapturedPngAsset, label: string, autoDownloaded?: boolean) => void;
 }
 
 const CARD_SLUGS = [
@@ -43,7 +50,9 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
   material,
   siteInfo,
   legalRef = null,
+  isMobileViewport = false,
   onNotify,
+  onOpenImageFallback,
 }) => {
   const cardRefs = useRef<Array<HTMLDivElement | null>>([null, null, null, null]);
   const [exportingZip, setExportingZip] = useState(false);
@@ -85,12 +94,17 @@ export const CardNewsView: React.FC<CardNewsViewProps> = ({
     if (!node || exportingIndex !== null) return;
     setExportingIndex(idx);
     try {
-      const fileName = await downloadNodeAsPng(
-        node,
-        `카드뉴스0${idx + 1}_${CARD_SLUGS[idx].slug}_${material.selectedWorkType}`,
-        dateLabel,
-        1080
-      );
+      const prefix = `카드뉴스0${idx + 1}_${CARD_SLUGS[idx].slug}_${material.selectedWorkType}`;
+      if (isMobileViewport && onOpenImageFallback) {
+        const asset = await captureNodeAsPngResult(node, prefix, dateLabel, 1080);
+        const didDownload = !isIosDevice() && !isInAppBrowser();
+        if (didDownload) {
+          triggerBlobDownload(asset.blob, asset.fileName);
+        }
+        onOpenImageFallback(asset, `${CARD_SLUGS[idx].label} (1080×1080 PNG)`, didDownload);
+        return;
+      }
+      const fileName = await downloadNodeAsPng(node, prefix, dateLabel, 1080);
       onNotify('success', `1080×1080 PNG 저장 완료: ${fileName}`);
     } catch {
       onNotify('error', '카드뉴스 PNG 저장 중 오류가 발생했습니다.');

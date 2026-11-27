@@ -74,7 +74,9 @@ import {
   downloadNodeAsPng,
   downloadSampleCaseTemplate,
   isInAppBrowser,
+  isIosDevice,
   normalizeLogoFileToDataUrl,
+  triggerBlobDownload,
 } from './utils/exportImage';
 import { getForeignLanguageNativeLabel } from './data/multilingualDict';
 import { SEASONAL_RISKS } from './data/seasonalRisks';
@@ -140,6 +142,7 @@ export default function App() {
   const [fallbackImageState, setFallbackImageState] = useState<{
     asset: CapturedPngAsset;
     label: string;
+    autoDownloaded?: boolean;
   } | null>(null);
   const [isSharingImage, setIsSharingImage] = useState<boolean>(false);
 
@@ -895,9 +898,12 @@ export default function App() {
     };
   };
 
-  const handleOpenImageFallback = useCallback((asset: CapturedPngAsset, label: string) => {
-    setFallbackImageState({ asset, label });
-  }, []);
+  const handleOpenImageFallback = useCallback(
+    (asset: CapturedPngAsset, label: string, autoDownloaded = false) => {
+      setFallbackImageState({ asset, label, autoDownloaded });
+    },
+    []
+  );
 
   const handleExportPng = async (fromMobileBar = false) => {
     if (isExportingPng) return;
@@ -918,10 +924,15 @@ export default function App() {
     setIsExportingPng(true);
     try {
       const dateStr = siteInfo.educationDate || getTodayDateString();
-      // In KakaoTalk / Naver in-app browsers, direct blob/data downloads are frequently blocked
-      if ((fromMobileBar || isMobileViewport) && isInAppBrowser()) {
+      if (fromMobileBar || isMobileViewport) {
         const asset = await captureNodeAsPngResult(node, prefix, dateStr, targetPixelWidth);
-        setFallbackImageState({ asset, label });
+        // On non-iOS standard browsers (e.g. Android Chrome), trigger direct Blob download AND open
+        // the high-res image modal so iOS Safari, KakaoTalk, and all WebViews can always save to Photos.
+        const didDownload = !isIosDevice() && !isInAppBrowser();
+        if (didDownload) {
+          triggerBlobDownload(asset.blob, asset.fileName);
+        }
+        setFallbackImageState({ asset, label, autoDownloaded: didDownload });
         return;
       }
 
@@ -955,13 +966,13 @@ export default function App() {
 
       // In KakaoTalk/Naver in-app browsers, show long-press save + fresh-gesture share modal directly
       if (isInAppBrowser()) {
-        setFallbackImageState({ asset, label });
+        setFallbackImageState({ asset, label, autoDownloaded: false });
         return;
       }
 
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        // Pure `{ files }` payload (NO title/text) ensures iOS Share Sheet exposes "이미지 저장 (Save Image)"
         const shareData: ShareData = {
-          title: `${effectiveMaterial.selectedWorkType} 안전교육자료`,
           files: [asset.file],
         };
         const canShareFiles =
@@ -980,7 +991,7 @@ export default function App() {
         }
       }
 
-      setFallbackImageState({ asset, label });
+      setFallbackImageState({ asset, label, autoDownloaded: false });
     } catch {
       showToast('error', '공유용 이미지 생성 중 오류가 발생했습니다.');
     } finally {
@@ -1273,8 +1284,13 @@ export default function App() {
           aria-hidden={isMobileViewport && mobileTab === 'settings' ? true : undefined}
           className={
             isMobileViewport && mobileTab === 'settings'
-              ? 'fixed left-0 top-0 w-0 h-0 overflow-hidden pointer-events-none -z-10'
+              ? 'fixed left-0 top-0 w-[794px] pointer-events-none -z-10'
               : 'flex-1 min-w-0 flex flex-col pb-24 lg:pb-0'
+          }
+          style={
+            isMobileViewport && mobileTab === 'settings'
+              ? { clipPath: 'inset(100%)' }
+              : undefined
           }
         >
           {/* Desktop Status & Attribution Metadata Bar (>=1024px) */}
@@ -1551,7 +1567,9 @@ export default function App() {
                 material={effectiveMaterial}
                 siteInfo={siteInfo}
                 legalRef={resolvedLegalRef}
+                isMobileViewport={isMobileViewport}
                 onNotify={showToast}
+                onOpenImageFallback={handleOpenImageFallback}
               />
             )}
           </div>
@@ -1670,6 +1688,7 @@ export default function App() {
       <ImageShareFallbackModal
         asset={fallbackImageState?.asset ?? null}
         titleLabel={fallbackImageState?.label}
+        autoDownloaded={fallbackImageState?.autoDownloaded}
         onClose={() => setFallbackImageState(null)}
         onNotify={showToast}
       />
