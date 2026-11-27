@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   X,
   Scale,
@@ -11,14 +11,27 @@ import {
   ShieldAlert,
   FileText,
   CheckCircle2,
+  Globe,
 } from 'lucide-react';
-import { AccidentCase, ResolvedLegalReference } from '../types/safety';
+import {
+  AccidentCase,
+  ForeignLanguageCode,
+  RefsMediaI18nData,
+  ResolvedLegalReference,
+} from '../types/safety';
+import {
+  formatMediaQrBadgeLabel,
+  getForeignMediaSectionTitle,
+  selectDisplayMediaForLanguage,
+} from '../services/legalLoader';
 
 interface LegalReferenceDrawerProps {
   open: boolean;
   onClose: () => void;
   legalRef: ResolvedLegalReference | null;
   primaryCase: AccidentCase;
+  foreignLanguage?: ForeignLanguageCode;
+  mediaI18nDb?: RefsMediaI18nData | null;
 }
 
 type DrawerTab = 'laws' | 'guides' | 'media';
@@ -28,8 +41,15 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
   onClose,
   legalRef,
   primaryCase,
+  foreignLanguage = 'none',
+  mediaI18nDb = null,
 }) => {
   const [activeTab, setActiveTab] = useState<DrawerTab>('laws');
+
+  const selectedMedia = useMemo(
+    () => selectDisplayMediaForLanguage(legalRef, mediaI18nDb, foreignLanguage, 4),
+    [legalRef, mediaI18nDb, foreignLanguage]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -136,7 +156,9 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
             <PlayCircle className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">영상·OPS</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 tabular-nums">
-              {(legalRef?.qrMedia.length ?? 0) + (legalRef?.auxMedia.length ?? 0)}
+              {selectedMedia.foreignItems.length +
+                selectedMedia.koItems.length +
+                (legalRef?.auxMedia.length ?? 0)}
             </span>
           </button>
         </div>
@@ -319,21 +341,56 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {foreignLanguage !== 'none' && selectedMedia.foreignItems.length > 0 && (
+                <div className="space-y-2.5 pb-3 border-b border-slate-200">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="inline-flex items-center gap-1.5 text-[12.5px] font-extrabold text-orange-900">
+                      <Globe className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                      <span>{getForeignMediaSectionTitle(foreignLanguage)}</span>
+                    </h4>
+                    <span className="text-[10.5px] font-bold text-orange-700 shrink-0">
+                      QR 우선 배치
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedMedia.foreignItems.map((m) => (
+                      <a
+                        key={m.url}
+                        href={m.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-3 rounded-lg border border-orange-200 bg-orange-50/50 hover:border-orange-400 hover:bg-orange-50 p-3 transition-colors"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <span className="inline-block px-1.5 py-0.5 rounded-sm bg-orange-700 text-white text-[10px] font-extrabold whitespace-nowrap">
+                            {formatMediaQrBadgeLabel(m, foreignLanguage)}
+                          </span>
+                          <p className="text-[12.5px] font-bold text-slate-900 leading-snug keep-all">
+                            {m.title}
+                          </p>
+                        </div>
+                        <ExternalLink className="w-4 h-4 text-orange-600 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <h4 className="text-[12.5px] font-extrabold text-slate-900">
-                    모바일 현장 시청용 공단 공식 자료 (동영상 · OPS · 포스터 · 리플릿)
+                    한국어 공단 공식 자료 (동영상 · OPS · 포스터 · 리플릿)
                   </h4>
                   <span className="text-[10.5px] text-slate-500">2면 별지 QR 연결 대상</span>
                 </div>
 
-                {legalRef.qrMedia.length === 0 ? (
+                {selectedMedia.koItems.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-slate-300 p-5 text-center text-[12px] text-slate-500">
                     연결된 공단 공식 미디어가 없습니다.
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {legalRef.qrMedia.map((m) => (
+                    {selectedMedia.koItems.map((m) => (
                       <a
                         key={m.url}
                         href={m.url}
@@ -342,8 +399,8 @@ export const LegalReferenceDrawer: React.FC<LegalReferenceDrawerProps> = ({
                         className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50 p-3 transition-colors"
                       >
                         <div className="min-w-0 space-y-0.5">
-                          <span className="inline-block px-1.5 py-0.5 rounded-sm bg-orange-100 text-orange-900 text-[10px] font-extrabold">
-                            {m.media_style}
+                          <span className="inline-block px-1.5 py-0.5 rounded-sm bg-orange-100 text-orange-900 text-[10px] font-extrabold whitespace-nowrap">
+                            {formatMediaQrBadgeLabel(m, foreignLanguage)}
                           </span>
                           <p className="text-[12.5px] font-bold text-slate-900 leading-snug keep-all">
                             {m.title}

@@ -14,8 +14,14 @@ import {
 import {
   CustomSiteInfo,
   GeneratedMaterial,
+  RefsMediaI18nData,
   ResolvedLegalReference,
 } from '../types/safety';
+import {
+  formatMediaQrBadgeLabel,
+  inferMediaLang,
+  selectDisplayMediaForLanguage,
+} from '../services/legalLoader';
 import { generateLocalQrDataUrl } from '../utils/qrLocal';
 import {
   CapturedPngAsset,
@@ -29,6 +35,7 @@ interface OpsReferenceSheetViewProps {
   material: GeneratedMaterial;
   siteInfo: CustomSiteInfo;
   legalRef: ResolvedLegalReference | null;
+  mediaI18nDb?: RefsMediaI18nData | null;
   sheetRef?: React.RefObject<HTMLDivElement | null>;
   isPrintClone?: boolean;
   onNotify?: (type: 'success' | 'error', message: string) => void;
@@ -328,6 +335,7 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
     material,
     siteInfo,
     legalRef,
+    mediaI18nDb = null,
     sheetRef,
     isPrintClone = false,
     onNotify,
@@ -347,8 +355,14 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
     const showMediaQr = Boolean(sections?.mediaQr);
 
     const visibleQrItems = useMemo(
-      () => (legalRef?.qrMedia ?? []).slice(0, 4),
-      [legalRef?.qrMedia]
+      () =>
+        selectDisplayMediaForLanguage(
+          legalRef,
+          mediaI18nDb,
+          siteInfo.foreignLanguage,
+          4
+        ).qrItems,
+      [legalRef, mediaI18nDb, siteInfo.foreignLanguage]
     );
 
     const contextKeywords = useMemo(() => {
@@ -806,13 +820,15 @@ export const OpsReferenceSheetView: React.FC<OpsReferenceSheetViewProps> = React
                         }`}
                       >
                         <span
-                          className={`px-1.5 py-0.5 rounded-sm text-[9px] font-extrabold ${
+                          className={`inline-block px-1.5 py-0.5 rounded-sm text-[8.8px] font-extrabold whitespace-nowrap shrink-0 ${
                             inkSaver
                               ? 'border border-slate-900 text-slate-950 bg-white'
-                              : 'bg-slate-900 text-white'
+                              : siteInfo.foreignLanguage !== 'none' && inferMediaLang(m) !== 'ko'
+                                ? 'bg-orange-700 text-white'
+                                : 'bg-slate-900 text-white'
                           }`}
                         >
-                          공단 {m.media_style}
+                          {formatMediaQrBadgeLabel(m, siteInfo.foreignLanguage)}
                         </span>
 
                         {/* Print-grade QR: Pure black #000 on #FFF, ~19mm (74px) + 2mm quiet zone */}

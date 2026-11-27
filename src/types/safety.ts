@@ -228,11 +228,34 @@ export interface ResolvedKoshaGuide extends KoshaGuideItem {
   staleness_note: string;
 }
 
+export type MediaLangCode =
+  | 'ko'
+  | 'en'
+  | 'vi'
+  | 'zh'
+  | 'th'
+  | 'km'
+  | 'uz'
+  | 'multi'
+  | 'other_foreign';
+
 export interface KoshaMediaItem {
   doc_id: string;
   title: string;
   media_style: string;
   url: string;
+  lang?: MediaLangCode;
+}
+
+export interface RefsMediaI18nData {
+  format: string;
+  synced_at: string;
+  supported_langs: Array<Exclude<MediaLangCode, 'ko' | 'other_foreign'>>;
+  stats: {
+    groups_with_i18n: number;
+    total_i18n_media: number;
+  };
+  groups: Record<string, Partial<Record<Exclude<MediaLangCode, 'ko' | 'other_foreign'>, KoshaMediaItem[]>>>;
 }
 
 export interface BlockedConflictItem {
@@ -274,6 +297,7 @@ export interface RefsLegalData {
 
 export interface ResolvedLegalReference {
   matchedGroupKey: string;
+  matchedIndustry: IndustryType;
   matchedBy: 'case_keyword' | 'case_worktype' | 'selected_worktype';
   syncedAt: string;
   lawPortalUrl: string;
@@ -284,6 +308,7 @@ export interface ResolvedLegalReference {
   guides: ResolvedKoshaGuide[];
   qrMedia: KoshaMediaItem[];
   auxMedia: KoshaMediaItem[];
+  industryFallbackKoMedia: KoshaMediaItem[];
   primaryLawShort: string;
   primaryGuideNo: string | null;
   latestAmendedDate: string;

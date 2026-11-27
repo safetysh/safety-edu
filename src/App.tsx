@@ -31,6 +31,7 @@ import {
   MetaSummaryData,
   OutputFormat,
   RefsLegalData,
+  RefsMediaI18nData,
   SourceFilterTab,
   TimelineStep,
   VariationOption,
@@ -50,6 +51,7 @@ import {
 } from './services/dbLoader';
 import {
   loadRefsLegalDb,
+  loadRefsMediaI18n,
   resolveLegalReferenceForCase,
 } from './services/legalLoader';
 import {
@@ -115,6 +117,7 @@ export default function App() {
   const [customCases, setCustomCases] = useState<AccidentCase[]>([]);
   const [metaSummary, setMetaSummary] = useState<MetaSummaryData | null>(null);
   const [legalDb, setLegalDb] = useState<RefsLegalData | null>(null);
+  const [mediaI18nDb, setMediaI18nDb] = useState<RefsMediaI18nData | null>(null);
   const [legalDrawerOpen, setLegalDrawerOpen] = useState<boolean>(false);
   const [isShardLoading, setIsShardLoading] = useState<boolean>(false);
 
@@ -181,6 +184,13 @@ export default function App() {
       setMobileOpsPage('page1');
     }
   }, [siteInfo.showPage2Appendix, mobileOpsPage]);
+
+  // Reset vertical scroll position on mobile/tablet (<1024px) when switching between
+  // settings/preview tabs or Page 1/Page 2 so top controls are never tucked under the sticky bar.
+  useEffect(() => {
+    if (!isMobileViewport || typeof window === 'undefined') return;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [isMobileViewport, mobileTab, mobileOpsPage]);
 
   const initialGen = useMemo(
     () =>
@@ -259,6 +269,17 @@ export default function App() {
     });
     return () => controller.abort();
   }, []);
+
+  // Lazy-load refs_media_i18n.json ONLY when foreign language bilingual mode is active
+  // so Korean-only mode incurs zero additional network requests or initial load overhead.
+  useEffect(() => {
+    if (siteInfo.foreignLanguage === 'none' || mediaI18nDb) return;
+    const controller = new AbortController();
+    loadRefsMediaI18n(controller.signal).then((i18n) => {
+      if (i18n) setMediaI18nDb(i18n);
+    });
+    return () => controller.abort();
+  }, [siteInfo.foreignLanguage, mediaI18nDb]);
 
   // Lazy-load the selected industry's fast core shard first, then silently hydrate any background extension
   // and quietly prefetch remaining industries during browser idle time for 0ms switching.
@@ -1631,6 +1652,7 @@ export default function App() {
                         material={effectiveMaterial}
                         siteInfo={siteInfo}
                         legalRef={resolvedLegalRef}
+                        mediaI18nDb={mediaI18nDb}
                         sheetRef={appendixSheetRef}
                         onNotify={showToast}
                         onOpenImageFallback={handleOpenImageFallback}
@@ -1747,6 +1769,7 @@ export default function App() {
             material={deferredPrintMaterial}
             siteInfo={siteInfo}
             legalRef={deferredPrintLegalRef}
+            mediaI18nDb={mediaI18nDb}
             isPrintClone
           />
         )}
@@ -1758,6 +1781,8 @@ export default function App() {
         onClose={() => setLegalDrawerOpen(false)}
         legalRef={resolvedLegalRef}
         primaryCase={effectiveMaterial.primaryCase}
+        foreignLanguage={siteInfo.foreignLanguage}
+        mediaI18nDb={mediaI18nDb}
       />
 
       {/* Mobile-only Safe Editing Bottom Sheet (Measures & TBM) */}

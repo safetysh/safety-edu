@@ -1405,9 +1405,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   )}
 
                   {pinnedCaseId && (
-                    <div className="pt-1 border-t border-slate-200 flex items-center justify-between text-[10.8px]">
-                      <span className="text-slate-500">
-                        사례 클릭 시 목록이 접히고 아래 옵션이 바로 보입니다.
+                    <div className="pt-1 border-t border-slate-200 flex items-center justify-between gap-2 text-[10.8px]">
+                      <span className="text-slate-500 truncate">
+                        사례 클릭 시 요약으로 자동 접힙니다.
                       </span>
                       <button
                         type="button"
@@ -1415,7 +1415,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                         className="inline-flex items-center gap-1 text-orange-700 hover:text-orange-900 font-bold shrink-0 cursor-pointer"
                       >
                         <RotateCcw className="w-2.5 h-2.5" />
-                        <span>추천 복귀</span>
+                        <span>추천 사례로 전환</span>
                       </button>
                     </div>
                   )}

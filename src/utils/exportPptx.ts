@@ -20,6 +20,11 @@ import {
   isOfficialKoshaApiCase,
 } from './textFit';
 import { generateLocalQrDataUrl } from './qrLocal';
+import {
+  formatMediaQrBadgeLabel,
+  loadRefsMediaI18n,
+  selectDisplayMediaForLanguage,
+} from '../services/legalLoader';
 
 const FONT = 'Malgun Gothic';
 
@@ -1361,7 +1366,15 @@ export async function downloadSafetyPptx(
     });
 
     const sec = siteInfo.appendixSections;
-    const showMedia = Boolean(sec?.mediaQr && legalRef.qrMedia.length > 0);
+    const i18nDb =
+      siteInfo.foreignLanguage !== 'none' ? await loadRefsMediaI18n() : null;
+    const selectedPptxQrItems = selectDisplayMediaForLanguage(
+      legalRef,
+      i18nDb,
+      siteInfo.foreignLanguage,
+      3
+    ).qrItems;
+    const showMedia = Boolean(sec?.mediaQr && selectedPptxQrItems.length > 0);
     const leftW = showMedia ? 5.75 : 9.1;
 
     // Left column: Tier 1 Laws + Tier 3 KOSHA GUIDE
@@ -1481,9 +1494,9 @@ export async function downloadSafetyPptx(
       });
     }
 
-    // Right column: Local PNG Data URL QR Codes (0% CORS taint)
+    // Right column: Local PNG Data URL QR Codes (0% CORS taint, unified language selector)
     if (showMedia) {
-      const qrItems = legalRef.qrMedia.slice(0, 3);
+      const qrItems = selectedPptxQrItems;
       const qrX = 6.35;
       const qrW = 3.2;
 
@@ -1542,7 +1555,7 @@ export async function downloadSafetyPptx(
           });
         }
 
-        slide.addText(`[공단 ${m.media_style}]`, {
+        slide.addText(`[${formatMediaQrBadgeLabel(m, siteInfo.foreignLanguage)}]`, {
           x: qrX + 1.08,
           y: rowY + 0.1,
           w: qrW - 1.26,

@@ -6,20 +6,64 @@ function sanitizeName(text: string): string {
 
 let cachedFontEmbedCSSPromise: Promise<string | null> | null = null;
 
+function isPrimaryWebfontLoaded(): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  if (typeof document === 'undefined' || !('fonts' in document)) return false;
+  try {
+    let hasLoadedNoto = false;
+    document.fonts.forEach((face) => {
+      if (face.status === 'loaded' && /Noto Sans KR/i.test(face.family)) {
+        hasLoadedNoto = true;
+      }
+    });
+    return hasLoadedNoto;
+  } catch {
+    return false;
+  }
+}
+
 async function getCachedFontEmbedCSS(
   node: HTMLElement,
   getFontEmbedCSS: typeof import('html-to-image').getFontEmbedCSS,
   timeoutMs = 2500
 ): Promise<string | null> {
   if (!cachedFontEmbedCSSPromise) {
+    // In offline / corporate-intranet environments where Google Fonts cannot load,
+    // immediately skip getFontEmbedCSS so html-to-image neither stalls nor spams
+    // hundreds of console.warn('Failed to fetch') messages for WOFF2 subsets.
+    if (!isPrimaryWebfontLoaded()) {
+      cachedFontEmbedCSSPromise = Promise.resolve(null);
+      return cachedFontEmbedCSSPromise;
+    }
+
     const rootTarget = document.body ?? node;
     const timeoutPromise = new Promise<null>((resolve) =>
       window.setTimeout(() => resolve(null), timeoutMs)
     );
-    cachedFontEmbedCSSPromise = Promise.race([
-      getFontEmbedCSS(rootTarget).catch(() => null),
-      timeoutPromise,
-    ]);
+
+    const runSilentFontEmbed = async (): Promise<string | null> => {
+      const origWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        const first = args[0];
+        const msg =
+          typeof first === 'string'
+            ? first
+            : first instanceof Error
+              ? first.message
+              : String(first ?? '');
+        if (/Failed to fetch/i.test(msg)) return;
+        origWarn.apply(console, args);
+      };
+      try {
+        return await getFontEmbedCSS(rootTarget);
+      } catch {
+        return null;
+      } finally {
+        console.warn = origWarn;
+      }
+    };
+
+    cachedFontEmbedCSSPromise = Promise.race([runSilentFontEmbed(), timeoutPromise]);
   }
   return cachedFontEmbedCSSPromise;
 }

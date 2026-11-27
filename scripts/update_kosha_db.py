@@ -23,6 +23,7 @@ DEFAULT_SMART_SEARCH_URL = "https://apis.data.go.kr/B552468/srch/smartSearch"
 DEFAULT_KOSHA_GUIDE_URL = "https://apis.data.go.kr/B552468/koshaguide/getKoshaGuide"
 KOSHA_GUIDE_CALL_API_ID = "1050"
 REFS_LEGAL_FILENAME = "refs_legal.json"
+REFS_MEDIA_I18N_FILENAME = "refs_media_i18n.json"
 
 TARGET_BUSINESSES = ["건설업", "제조업", "서비스업"]
 PER_BUSINESS_CASE_LIMIT = 500
@@ -944,6 +945,46 @@ def parse_case_occurred_date(contents, boardno=""):
     return ""
 
 
+def restore_kosha_stripped_newline_spacing(text: str) -> str:
+    """
+    Restores missing single spaces at line-break boundaries where KOSHA CMS
+    concatenated lines without whitespace (e.g., '08:52경서울', '공사현장에서재해자가',
+    '올라가비계', '작업 중밟은'). Strictly whitespace-only; never alters wording.
+    """
+    if not text:
+        return ""
+    ln = str(text)
+    # 1. Time & casualty parenthetical boundaries
+    ln = re.sub(r"(\d{1,2}:\d{2}\s*경|\d{1,2}시(?:\s*\d{1,2}분)?\s*경)(?=[가-힣])", r"\1 ", ln)
+    ln = re.sub(r"(?<!\s)(\(사망)", r" \1", ln)
+    # 2. Place postposition ('~에서') concatenated to following clause/subject
+    ln = re.sub(
+        r"((?:현장|사업장|작업장|공장|창고|아파트|마트|축사|건물|도로|단부|상부|내부)에서)(?=[가-힣]{2,})",
+        r"\1 ",
+        ln,
+    )
+    # 3. Progressive clause '~ 중' concatenated to next word
+    ln = re.sub(
+        r"((?:작업|이동하던|점검하던|운반하던|확인하던|해체하던|설치하던|정비하던|청소하던|절단하던|용접하던|보수하던|교체하던|제거하던|인양하던|탑승하던)\s*중)(?=[가-힣])",
+        r"\1 ",
+        ln,
+    )
+    # 4. Verb-connector stripped newline boundaries (excluding Korean endings)
+    ln = re.sub(r"(올라가)(?=(?!다|던|서|며|는|고|면|자|지|야|려|기|게)[가-힣]{2,})", r"\1 ", ln)
+    ln = re.sub(r"(위해)(?=(?!서|야|도|선|요)[가-힣]{2,})", r"\1 ", ln)
+    ln = re.sub(
+        r"(부딪혀|접촉하여|파단되어|전도되어|무너져|미끄러져|떨어져|들어올려|탑승하여)(?=[가-힣]{2,})",
+        r"\1 ",
+        ln,
+    )
+    ln = re.sub(
+        r"(고소작업대에|비계에|사다리에|지붕에)(?=(?:걸린|올라|탑승|매달|부딪|접촉))",
+        r"\1 ",
+        ln,
+    )
+    return re.sub(r"[ \t]{2,}", " ", ln)
+
+
 def parse_fatality_html(raw_html):
     """
     Strips MS Word tags and extracts image URL + standard KOSHA disclaimer while
@@ -979,9 +1020,9 @@ def parse_fatality_html(raw_html):
         if ln.startswith("※") and ("조사결과에 따라" in ln or "현재 파악된 내용" in ln):
             disclaimer = ln
         else:
-            # Fix concatenated time/casualty boundaries without breaking words like 경남/경기
-            ln = re.sub(r"(\d{1,2}:\d{2}\s*경|\d{1,2}시(?:\s*\d{1,2}분)?\s*경)(?=[가-힣])", r"\1 ", ln)
-            ln = re.sub(r"(?<!\s)(\(사망)", r" \1", ln)
+            # Fix concatenated boundaries where KOSHA CMS stripped line breaks without spaces
+            # (strictly whitespace-only restoration; zero wording changes)
+            ln = restore_kosha_stripped_newline_spacing(ln)
             ln = re.sub(r"(?<!\s)(※\s*위 내용은.*$)", "", ln).strip()
             if ln:
                 fact_lines.append(ln)
@@ -2166,8 +2207,87 @@ LEGAL_WORK_GROUPS = [
     },
 ]
 
-QR_MEDIA_PRIORITY = {"동영상": 4, "OPS": 3, "포스터": 2, "리플릿": 1}
+QR_MEDIA_PRIORITY = {"동영상": 5, "OPS": 4, "포스터": 3, "리플릿": 2, "애니메이션": 1}
 AUX_MEDIA_STYLES = {"교안(PPT)", "책자"}
+SUPPORTED_FOREIGN_MEDIA_LANGS = ("en", "vi", "zh", "th", "km", "uz")
+
+MEDIA_STYLE_GROUP = {
+    "동영상": "video",
+    "애니메이션": "video",
+    "OPS": "ops",
+    "포스터": "poster",
+    "리플릿": "leaflet",
+    "교안(PPT)": "ppt",
+    "책자": "book",
+}
+
+# Explicit supported 6-language patterns (checked BEFORE other-country tags so '(필리핀,영어)' maps to 'en')
+_MEDIA_LANG_PATTERNS = [
+    ("en", re.compile(r"(?<![가-힣])(?:영어|영문)(?![가-힣])|\benglish\b", re.I)),
+    ("vi", re.compile(r"베트남어?|vietnam(?:ese)?", re.I)),
+    ("zh", re.compile(r"중국어?|중문|chinese", re.I)),
+    ("th", re.compile(r"태국어?|\bthai\b", re.I)),
+    ("km", re.compile(r"캄보디아어?|크메르어?|khmer|cambodia", re.I)),
+    ("uz", re.compile(r"우즈베키스탄|우즈베크어?|우즈벡어?|uzbek", re.I)),
+]
+
+# Multilingual package / non-verbal visual materials (stored as lang='multi' in refs_media_i18n.json)
+_MEDIA_MULTI_RE = re.compile(r"\d+\s*개국어|다국어|논버벌|non-?verbal", re.I)
+
+# Other foreign languages/countries excluded from Korean-only & supported 6-language pools
+# (explicitly does NOT match plain '외국인' so Korean supervisor guides like '외국인 근로자 안전교육' stay 'ko')
+_MEDIA_OTHER_FOREIGN_RE = re.compile(
+    r"필리핀어?|타갈로그|키르기스스탄|키르기스어?|파키스탄어?|우르두어?|"
+    r"인도네시아어?|네팔어?|미얀마어?|스리랑카어?|싱할라어?|몽골어?|"
+    r"방글라데시어?|벵골어?|동티모르어?|라오스어?|러시아어?|카자흐스탄|카자흐어?|"
+    r"일본어|일어판|\b(?:tagalog|kyrgyz|pakistan|urdu|indonesia|nepal|myanmar|"
+    r"sri\s*lanka|mongol|bangladesh|timor|laos|russian|kazakh)\b",
+    re.I,
+)
+
+
+def classify_media_language(title, ctgr04=""):
+    """
+    Precisely classifies KOSHA cat=6 media language into:
+    'ko' | 'en' | 'vi' | 'zh' | 'th' | 'km' | 'uz' | 'multi' | 'other_foreign'.
+    Preserves normal Korean bracketed tags like [근로자용], (건설업), (자재인양) and
+    Korean supervisor guides mentioning '외국인'.
+    """
+    c4 = str(ctgr04 or "").strip()
+    t = str(title or "").strip()
+
+    for target in (c4, t):
+        if not target:
+            continue
+        for code, pat in _MEDIA_LANG_PATTERNS:
+            if pat.search(target):
+                return code
+        if _MEDIA_MULTI_RE.search(target):
+            return "multi"
+        if _MEDIA_OTHER_FOREIGN_RE.search(target):
+            return "other_foreign"
+
+    return "ko"
+
+
+def normalize_media_title_for_dedup(title):
+    """Strip country/format/target prefixes and multilingual suffixes for smart clone deduplication."""
+    t = str(title or "").strip()
+    # Drop trailing English subtitle after comma commonly found on KOSHA animations
+    t = re.sub(r",\s*[A-Za-z][A-Za-z0-9\s()\-/:.,'\"&]+$", "", t)
+    # Strip known leading/trailing tag brackets/parens (language, format, series)
+    t = re.sub(r"\(\s*\d+\s*개국어\s*\)", "", t)
+    t = re.sub(
+        r"^\s*[\(\[]\s*(?:동영상|OPS|OPL|포스터|리플릿|리플렛|애니메이션|근로자용|논버벌|안전보건포스터|"
+        r"중대재해사례\s*OPL|Quick\s*Message|한\s*눈에\s*보는|이지애의\s*안전있수다|이수지의\s*괜찮으시겠어요\?|"
+        r"[^\)\]]*(?:어|스탄|필리핀|베트남|중국|태국|캄보디아|우즈벡|네팔|몽골|미얀마|라오스|러시아|인도네시아|스리랑카|방글라데시|동티모르|영문|영어))[^\)\]]*[\)\]]\s*",
+        "",
+        t,
+        flags=re.I,
+    )
+    t = re.sub(r"\(\s*(?:네팔어|베트남어|중국어|태국어|영어|우즈벡어|캄보디아어|리플릿|리플렛|포스터|동영상)\s*\)\s*$", "", t, flags=re.I)
+    t = re.sub(r"[\s·\-_/()\[\]『』「」'\",.:!?]+", "", t).lower()
+    return t
 
 
 def extract_guide_domain_prefix(guide_no):
@@ -2218,19 +2338,19 @@ def is_noise_legal_title(title):
     return False
 
 
-def _smart_search_items(service_key, search_value, category, num_of_rows, secrets):
+def _smart_search_items(service_key, search_value, category, num_of_rows, secrets, page_no=1):
     data = _get_json_with_retry(
         DEFAULT_SMART_SEARCH_URL,
         {
             "serviceKey": service_key,
             "searchValue": search_value,
             "category": str(category),
-            "pageNo": 1,
+            "pageNo": page_no,
             "numOfRows": num_of_rows,
             "dataType": "JSON",
         },
         secrets,
-        f"SMARTSEARCH-cat{category}",
+        f"SMARTSEARCH-cat{category}-p{page_no}",
     )
     resp = data.get("response") or data
     hdr = resp.get("header") or {}
@@ -2445,20 +2565,56 @@ def check_conflict_blocklist(title, content):
     return None
 
 
+def _pick_diverse_media(candidates, limit=4):
+    """
+    Pick up to `limit` diverse media items prioritizing 동영상/OPS/포스터/리플릿/애니메이션
+    while deduplicating clones by (normalized_title, style_group, lang).
+    """
+    ranked = sorted(candidates, key=lambda x: (x[0], x[1]), reverse=True)
+    selected = []
+    seen_dedup = set()
+    by_style = {}
+
+    for _, _, item in ranked:
+        style_grp = MEDIA_STYLE_GROUP.get(item["media_style"], item["media_style"])
+        norm_t = normalize_media_title_for_dedup(item["title"]) or item["url"]
+        dkey = (norm_t, style_grp, item.get("lang", "ko"))
+        if dkey in seen_dedup:
+            continue
+        seen_dedup.add(dkey)
+        by_style.setdefault(item["media_style"], []).append(item)
+
+    # First pass: 1 item per distinct media style for balanced diversity
+    for preferred in ("동영상", "OPS", "포스터", "리플릿", "애니메이션"):
+        if by_style.get(preferred) and len(selected) < limit:
+            selected.append(by_style[preferred].pop(0))
+
+    # Second pass: fill remaining slots by original priority/score order
+    selected_urls = {x["url"] for x in selected}
+    for style_key in ("동영상", "애니메이션", "OPS", "포스터", "리플릿"):
+        for item in by_style.get(style_key, []):
+            if len(selected) >= limit:
+                break
+            if item["url"] not in selected_urls:
+                selected.append(item)
+                selected_urls.add(item["url"])
+
+    return selected
+
+
 def fetch_media_for_group(service_key, group_cfg, secrets):
-    """Fetch cat 6 KOSHA media and strictly filter/sort in Python (server ctgr01 is unreliable)."""
-    qr_candidates = []
-    aux_candidates = []
+    """
+    Fetch cat 6 KOSHA media with numOfRows=50 + conditional pagination (up to page 3)
+    so Korean ('ko') official media are never crowded out by recent foreign-language uploads.
+    Returns (ko_qr_selected, ko_aux_selected, i18n_by_lang, api_calls_used).
+    """
+    ko_qr_candidates = []
+    ko_aux_candidates = []
+    i18n_candidates = {lang: [] for lang in (*SUPPORTED_FOREIGN_MEDIA_LANGS, "multi")}
     seen_urls = set()
+    api_calls = 0
 
-    for q in group_cfg.get("media_queries") or []:
-        try:
-            items = _smart_search_items(service_key, q, 6, 25, secrets)
-        except Exception as e:
-            print(f"[WARN] smartSearch cat6 '{q}' 실패: {mask_secrets(e, secrets)}")
-            items = []
-        time.sleep(0.12)
-
+    def ingest_items(items):
         for it in items:
             style = str(it.get("media_style") or "").strip()
             url = str(it.get("filepath") or "").strip()
@@ -2469,42 +2625,87 @@ def fetch_media_for_group(service_key, group_cfg, secrets):
                 continue
             seen_urls.add(url)
 
+            lang = classify_media_language(title, it.get("ctgr04") or "")
+            if lang == "other_foreign":
+                continue
+
             score_val = float(it.get("score") or 0)
             entry = {
                 "doc_id": str(it.get("doc_id") or "").strip(),
                 "title": title,
                 "media_style": style,
                 "url": url,
+                "lang": lang,
             }
-            if style in QR_MEDIA_PRIORITY:
-                qr_candidates.append((QR_MEDIA_PRIORITY[style], score_val, entry))
-            elif style in AUX_MEDIA_STYLES:
-                aux_candidates.append((score_val, entry))
 
-    # Pick balanced top 4 QR media (prioritizing at least 1 동영상 and 1 OPS when available)
-    qr_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    qr_selected = []
-    by_style = {}
-    for _, _, item in qr_candidates:
-        by_style.setdefault(item["media_style"], []).append(item)
+            if lang == "ko":
+                if style in QR_MEDIA_PRIORITY:
+                    ko_qr_candidates.append((QR_MEDIA_PRIORITY[style], score_val, entry))
+                elif style in AUX_MEDIA_STYLES:
+                    ko_aux_candidates.append((score_val, entry))
+            elif lang in i18n_candidates:
+                if style in QR_MEDIA_PRIORITY:
+                    # Prefer video/animation slightly higher for foreign worker comprehension
+                    i18n_prio = 5 if style in ("동영상", "애니메이션") else QR_MEDIA_PRIORITY[style]
+                    i18n_candidates[lang].append((i18n_prio, score_val, entry))
 
-    for preferred in ("동영상", "OPS", "포스터", "리플릿"):
-        if by_style.get(preferred) and len(qr_selected) < 4:
-            qr_selected.append(by_style[preferred].pop(0))
-    for _, _, item in qr_candidates:
-        if len(qr_selected) >= 4:
+    queries = group_cfg.get("media_queries") or []
+    # Pass 1: page 1 with 50 rows per query
+    for q in queries:
+        try:
+            items = _smart_search_items(service_key, q, 6, 50, secrets, page_no=1)
+            api_calls += 1
+        except Exception as e:
+            print(f"[WARN] smartSearch cat6 '{q}' p1 실패: {mask_secrets(e, secrets)}")
+            items = []
+        time.sleep(0.12)
+        ingest_items(items)
+
+    # Pass 2 (conditional pagination): if Korean QR candidates < 4 (e.g. 타워크레인 crowded by foreign uploads),
+    # fetch page 2~3 until we collect enough genuine Korean media.
+    for extra_page in (2, 3):
+        if len(_pick_diverse_media(ko_qr_candidates, limit=4)) >= 4:
             break
-        if all(x["url"] != item["url"] for x in qr_selected):
-            qr_selected.append(item)
+        for q in queries:
+            try:
+                items = _smart_search_items(service_key, q, 6, 50, secrets, page_no=extra_page)
+                api_calls += 1
+            except Exception as e:
+                print(f"[WARN] smartSearch cat6 '{q}' p{extra_page} 실패: {mask_secrets(e, secrets)}")
+                items = []
+            time.sleep(0.12)
+            if items:
+                ingest_items(items)
+            if len(_pick_diverse_media(ko_qr_candidates, limit=4)) >= 4:
+                break
 
-    aux_candidates.sort(key=lambda x: x[0], reverse=True)
-    aux_selected = [item for _, item in aux_candidates[:3]]
-    return qr_selected, aux_selected
+    ko_qr_selected = _pick_diverse_media(ko_qr_candidates, limit=4)
+
+    ko_aux_candidates.sort(key=lambda x: x[0], reverse=True)
+    ko_aux_selected = []
+    seen_aux_keys = set()
+    for _, item in ko_aux_candidates:
+        dkey = (normalize_media_title_for_dedup(item["title"]) or item["url"], item["media_style"])
+        if dkey in seen_aux_keys:
+            continue
+        seen_aux_keys.add(dkey)
+        ko_aux_selected.append(item)
+        if len(ko_aux_selected) >= 3:
+            break
+
+    i18n_selected = {}
+    for lang_code, cands in i18n_candidates.items():
+        picked = _pick_diverse_media(cands, limit=3)
+        if picked:
+            i18n_selected[lang_code] = picked
+
+    return ko_qr_selected, ko_aux_selected, i18n_selected, api_calls
 
 
 def build_legal_references_db(service_key, output_dir, secrets):
     synced_at = time.strftime("%Y-%m-%d")
     out_path = os.path.join(output_dir, REFS_LEGAL_FILENAME)
+    i18n_out_path = os.path.join(output_dir, REFS_MEDIA_I18N_FILENAME)
 
     laws_by_id = fetch_whitelisted_laws(service_key, secrets)
     if len(laws_by_id) < 10:
@@ -2517,8 +2718,11 @@ def build_legal_references_db(service_key, output_dir, secrets):
     notices_by_id = {}
     guides_by_no = {}
     groups_out = {}
+    i18n_groups_out = {}
     total_blocked = 0
     total_media = 0
+    total_i18n_media = 0
+    total_media_api_calls = 0
 
     for gcfg in LEGAL_WORK_GROUPS:
         wt = gcfg["work_type"]
@@ -2581,8 +2785,13 @@ def build_legal_references_db(service_key, output_dir, secrets):
                 "staleness_note": mg["staleness_note"],
             })
 
-        qr_media, aux_media = fetch_media_for_group(service_key, gcfg, secrets)
+        qr_media, aux_media, i18n_by_lang, media_calls = fetch_media_for_group(service_key, gcfg, secrets)
         total_media += len(qr_media) + len(aux_media)
+        total_media_api_calls += media_calls
+
+        if i18n_by_lang:
+            i18n_groups_out[wt] = i18n_by_lang
+            total_i18n_media += sum(len(v) for v in i18n_by_lang.values())
 
         groups_out[wt] = {
             "work_type": wt,
@@ -2616,17 +2825,35 @@ def build_legal_references_db(service_key, output_dir, secrets):
         "groups": groups_out,
     }
 
+    i18n_payload = {
+        "format": "kosha-media-i18n-v1",
+        "synced_at": synced_at,
+        "supported_langs": list(SUPPORTED_FOREIGN_MEDIA_LANGS) + ["multi"],
+        "stats": {
+            "groups_with_i18n": len(i18n_groups_out),
+            "total_i18n_media": total_i18n_media,
+        },
+        "groups": i18n_groups_out,
+    }
+
     os.makedirs(output_dir, exist_ok=True)
     tmp_path = out_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(tmp_path, out_path)
 
+    i18n_tmp_path = i18n_out_path + ".tmp"
+    with open(i18n_tmp_path, "w", encoding="utf-8") as f:
+        json.dump(i18n_payload, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(i18n_tmp_path, i18n_out_path)
+
     size_kb = round(os.path.getsize(out_path) / 1024, 1)
+    i18n_size_kb = round(os.path.getsize(i18n_out_path) / 1024, 1)
     print(
-        f"[Phase 2 완료] {REFS_LEGAL_FILENAME}: {size_kb} KB | "
+        f"[Phase 2 완료] {REFS_LEGAL_FILENAME}: {size_kb} KB (한국어 미디어 {total_media}건) | "
+        f"{REFS_MEDIA_I18N_FILENAME}: {i18n_size_kb} KB (다국어 미디어 {total_i18n_media}건) | "
         f"공종 {len(groups_out)}종 · 규칙 {len(laws_by_id)}조 · 고시 {len(notices_by_id)}건 · "
-        f"충돌차단 {total_blocked}건 · 코샤가이드 {len(guides_by_no)}종(전체 {len(all_guides)}건) · 미디어 {total_media}건"
+        f"충돌차단 {total_blocked}건 · 코샤가이드 {len(guides_by_no)}종 · 미디어 API {total_media_api_calls}회"
     )
     return payload
 
