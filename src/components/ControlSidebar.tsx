@@ -182,6 +182,10 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   const [searchPage, setSearchPage] = useState(1);
   const [isSearchCollapsed, setIsSearchCollapsed] = useState(false);
 
+  // Site info & logo accordion state (default collapsed on [제작 설정] & [사례 검색] tabs)
+  const [basicSiteInfoOpen, setBasicSiteInfoOpen] = useState(false);
+  const [searchSiteInfoOpen, setSearchSiteInfoOpen] = useState(false);
+
   // Output Options presets state
   const [newPresetInput, setNewPresetInput] = useState('');
   const [presetPage, setPresetPage] = useState(1);
@@ -757,103 +761,189 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
     </div>
   );
 
-  const renderSiteMetadataBlock = () => (
-    <div className="space-y-2.5">
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-800">
-          현장명(사업장명) 및 현장로고 등 삽입
-        </span>
-        <span className="text-[10.5px] text-emerald-700 font-semibold">자동저장</span>
-      </div>
+  const renderSiteMetadataBlock = (options?: {
+    collapsible?: boolean;
+    panelId?: string;
+    isOpen?: boolean;
+    onToggle?: () => void;
+  }) => {
+    const collapsible = Boolean(options?.collapsible);
+    const isOpen = collapsible ? Boolean(options?.isOpen) : true;
+    const panelId = options?.panelId || 'site-metadata-panel';
 
-      <div>
-        <label htmlFor="site-name" className="block text-[11px] font-semibold text-slate-600 mb-1">
-          현장명 / 사업장명
-        </label>
-        <input
-          id="site-name"
-          type="text"
-          value={siteInfo.siteName}
-          onChange={(e) => onUpdateSiteInfo({ siteName: e.target.value })}
-          placeholder="예: (주)대한건설 성수동 신축현장"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
-        />
-      </div>
+    const trimmedSite = siteInfo.siteName.trim();
+    const trimmedInstructor = siteInfo.instructorName.trim();
+    const summaryParts: string[] = [];
+    if (trimmedSite) summaryParts.push(trimmedSite);
+    if (trimmedInstructor) summaryParts.push(trimmedInstructor);
+    if (summaryParts.length === 0) summaryParts.push('미입력');
+    if (siteInfo.educationDate) summaryParts.push(siteInfo.educationDate);
+    if (siteInfo.logoDataUrl) summaryParts.push('로고 ✓');
+    const siteSummaryText = summaryParts.join(' · ');
 
-      <div className="grid grid-cols-2 gap-2">
+    const fieldsContent = (
+      <>
         <div>
-          <label htmlFor="edu-date" className="block text-[11px] font-semibold text-slate-600 mb-1">
-            교육일자
+          <label htmlFor="site-name" className="block text-[11px] font-semibold text-slate-600 mb-1">
+            현장명 / 사업장명
           </label>
           <input
-            id="edu-date"
-            type="date"
-            value={siteInfo.educationDate}
-            onChange={(e) => onUpdateSiteInfo({ educationDate: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[11.5px] text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-900"
-          />
-        </div>
-        <div>
-          <label htmlFor="instructor-name" className="block text-[11px] font-semibold text-slate-600 mb-1">
-            교육강사명
-          </label>
-          <input
-            id="instructor-name"
+            id="site-name"
             type="text"
-            value={siteInfo.instructorName}
-            onChange={(e) => onUpdateSiteInfo({ instructorName: e.target.value })}
-            placeholder="예: 김안전 과장"
-            className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+            value={siteInfo.siteName}
+            onChange={(e) => onUpdateSiteInfo({ siteName: e.target.value })}
+            placeholder="예: (주)대한건설 성수동 신축현장"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
           />
         </div>
-      </div>
 
-      {/* Company / Site Logo Upload */}
-      <div className="space-y-1.5">
-        <span className="block text-[11px] font-semibold text-slate-600">
-          회사·현장 로고 이미지 (PNG/JPG/SVG/WebP · 자동 압축)
-        </span>
-        <input
-          ref={logoInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.webp"
-          onChange={handleLogoChange}
-          className="hidden"
-        />
-        {siteInfo.logoDataUrl ? (
-          <div className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <img
-                src={siteInfo.logoDataUrl}
-                alt="업로드된 현장 로고"
-                className="h-7 max-w-[84px] object-contain bg-white border border-slate-200 rounded-sm px-1"
-              />
-              <span className="text-[11px] font-medium text-slate-700 truncate">
-                {siteInfo.logoFileName || '로고 적용됨'}
-              </span>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label htmlFor="edu-date" className="block text-[11px] font-semibold text-slate-600 mb-1">
+              교육일자
+            </label>
+            <input
+              id="edu-date"
+              type="date"
+              value={siteInfo.educationDate}
+              onChange={(e) => onUpdateSiteInfo({ educationDate: e.target.value })}
+              className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[11.5px] text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-900"
+            />
+          </div>
+          <div>
+            <label htmlFor="instructor-name" className="block text-[11px] font-semibold text-slate-600 mb-1">
+              교육강사명
+            </label>
+            <input
+              id="instructor-name"
+              type="text"
+              value={siteInfo.instructorName}
+              onChange={(e) => onUpdateSiteInfo({ instructorName: e.target.value })}
+              placeholder="예: 김안전 과장"
+              className="w-full rounded-md border border-slate-300 px-2.5 py-2 lg:py-1.5 text-base lg:text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+            />
+          </div>
+        </div>
+
+        {/* Company / Site Logo Upload */}
+        <div className="space-y-1.5">
+          <span className="block text-[11px] font-semibold text-slate-600">
+            회사·현장 로고 이미지 (PNG/JPG/SVG/WebP · 자동 압축)
+          </span>
+          <input
+            ref={logoInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.webp"
+            onChange={handleLogoChange}
+            className="hidden"
+          />
+          {siteInfo.logoDataUrl ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <img
+                  src={siteInfo.logoDataUrl}
+                  alt="업로드된 현장 로고"
+                  className="h-7 max-w-[84px] object-contain bg-white border border-slate-200 rounded-sm px-1"
+                />
+                <span className="text-[11px] font-medium text-slate-700 truncate">
+                  {siteInfo.logoFileName || '로고 적용됨'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onRemoveLogo}
+                aria-label="로고 삭제"
+                className="min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center text-slate-500 hover:text-red-700 p-1 transition-colors cursor-pointer shrink-0"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             </div>
+          ) : (
             <button
               type="button"
-              onClick={onRemoveLogo}
-              aria-label="로고 삭제"
-              className="min-w-[40px] min-h-[40px] lg:min-w-0 lg:min-h-0 flex items-center justify-center text-slate-500 hover:text-red-700 p-1 transition-colors cursor-pointer shrink-0"
+              onClick={() => logoInputRef.current?.click()}
+              className="w-full min-h-[44px] lg:min-h-0 py-2 px-3 rounded-md border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <ImagePlus className="w-3.5 h-3.5 shrink-0" />
+              <span>로고 업로드 (SVG·WebP·고화질 자동 압축)</span>
             </button>
+          )}
+        </div>
+      </>
+    );
+
+    if (!collapsible) {
+      return (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-bold text-slate-800">
+              현장명(사업장명) 및 현장로고 등 삽입
+            </span>
+            <span className="text-[10.5px] text-emerald-700 font-semibold">자동저장</span>
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => logoInputRef.current?.click()}
-            className="w-full min-h-[44px] lg:min-h-0 py-2 px-3 rounded-md border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <ImagePlus className="w-3.5 h-3.5 shrink-0" />
-            <span>로고 업로드 (SVG·WebP·고화질 자동 압축)</span>
-          </button>
-        )}
+          {fieldsContent}
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <button
+          type="button"
+          onClick={options?.onToggle}
+          aria-expanded={isOpen}
+          aria-controls={panelId}
+          className="w-full min-h-[48px] px-3 py-2.5 text-left hover:bg-slate-50 active:bg-slate-100/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-bold text-slate-800 truncate">
+              현장명(사업장명) 및 현장로고 등 삽입
+            </span>
+            <div className="inline-flex items-center gap-1.5 shrink-0">
+              <span className="text-[10.5px] text-emerald-700 font-semibold whitespace-nowrap">
+                자동저장
+              </span>
+              <span
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border text-[10.5px] font-bold whitespace-nowrap transition-colors ${
+                  isOpen
+                    ? 'border-slate-300 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-slate-100 text-slate-700'
+                }`}
+              >
+                <span>{isOpen ? '접기' : '펼치기'}</span>
+                {isOpen ? (
+                  <ChevronUp className="w-3 h-3 shrink-0" />
+                ) : (
+                  <ChevronDown className="w-3 h-3 shrink-0" />
+                )}
+              </span>
+            </div>
+          </div>
+          {!isOpen && (
+            <p className="mt-1 text-[11px] font-medium text-slate-500 truncate tabular-nums">
+              {siteSummaryText}
+            </p>
+          )}
+        </button>
+
+        <div
+          id={panelId}
+          aria-hidden={!isOpen}
+          className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+            isOpen
+              ? 'grid-rows-[1fr] opacity-100 visible'
+              : 'grid-rows-[0fr] opacity-0 invisible'
+          }`}
+        >
+          <div className="overflow-hidden">
+            <div className="px-3 pb-3 pt-2.5 border-t border-slate-200/80 space-y-2.5">
+              {fieldsContent}
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <aside
@@ -1087,8 +1177,13 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
             <hr className="border-slate-200" />
 
-            {/* 8. Site Info & Logo (synced identically with 출력 옵션 & 사례 검색) */}
-            {renderSiteMetadataBlock()}
+            {/* 8. Site Info & Logo (collapsible accordion, default collapsed; synced with 출력 옵션 & 사례 검색) */}
+            {renderSiteMetadataBlock({
+              collapsible: true,
+              panelId: 'basic-site-info-panel',
+              isOpen: basicSiteInfoOpen,
+              onToggle: () => setBasicSiteInfoOpen((prev) => !prev),
+            })}
 
             {/* 9. Print & Layout Switches (synced identically with 출력 옵션 & 사례 검색) */}
             {renderPrintLayoutSettings()}
@@ -1442,7 +1537,12 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               {renderOutputFormatBlock('1. 출력 형식')}
               {renderVariationOptionBlock('2. 교육 구성 변주 옵션', 'search-variation-select')}
               {renderPrintLayoutSettings()}
-              {renderSiteMetadataBlock()}
+              {renderSiteMetadataBlock({
+                collapsible: true,
+                panelId: 'search-site-info-panel',
+                isOpen: searchSiteInfoOpen,
+                onToggle: () => setSearchSiteInfoOpen((prev) => !prev),
+              })}
 
               <hr className="border-slate-200" />
 
