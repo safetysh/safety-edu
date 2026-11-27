@@ -155,6 +155,11 @@ export default function App() {
   const [isExportingPptx, setIsExportingPptx] = useState(false);
   const [isExportingPng, setIsExportingPng] = useState(false);
   const [isCopyingClipboard, setIsCopyingClipboard] = useState(false);
+  const [isSearchShardsLoading, setIsSearchShardsLoading] = useState(false);
+  const [pendingCaseSwitch, setPendingCaseSwitch] = useState<{
+    label: string;
+    onConfirm: () => void;
+  } | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const opsSheetRef = useRef<HTMLDivElement | null>(null);
@@ -433,8 +438,13 @@ export default function App() {
   const deferredPrintMaterial = useDeferredValue(effectiveMaterial);
 
   const resolvedLegalRef = useMemo(
-    () => resolveLegalReferenceForCase(legalDb, effectiveMaterial.primaryCase, workType),
-    [legalDb, effectiveMaterial.primaryCase, workType]
+    () =>
+      resolveLegalReferenceForCase(
+        legalDb,
+        effectiveMaterial.primaryCase,
+        pinnedCaseId ? effectiveMaterial.primaryCase.work_type : workType
+      ),
+    [legalDb, effectiveMaterial.primaryCase, pinnedCaseId, workType]
   );
   const deferredPrintLegalRef = useDeferredValue(resolvedLegalRef);
 
@@ -447,6 +457,46 @@ export default function App() {
       setToast(null);
     }, 4200);
   }, []);
+
+  const ensureAllShardsLoaded = useCallback(async () => {
+    const allIndustries: IndustryType[] = ['건설현장', '제조업', '서비스업'];
+    const missing = allIndustries.filter((ind) => !isIndustryShardCached(ind));
+    const pendingExts = allIndustries.filter((ind) => hasPendingIndustryExtension(ind));
+    if (missing.length === 0 && pendingExts.length === 0) return;
+
+    setIsSearchShardsLoading(true);
+    try {
+      if (missing.length > 0) {
+        await Promise.all(missing.map((ind) => loadIndustryShard(ind)));
+      }
+      if (pendingExts.length > 0) {
+        await Promise.all(pendingExts.map((ind) => loadIndustryExtension(ind)));
+      }
+      const mergedCases = getCachedCasesSnapshot(liveStateRef.current.customCases);
+      if (mergedCases !== liveStateRef.current.casesDb) {
+        liveStateRef.current.casesDb = mergedCases;
+        startTransition(() => {
+          setCasesDb(mergedCases);
+        });
+      }
+    } finally {
+      setIsSearchShardsLoading(false);
+    }
+  }, []);
+
+  const guardCaseSwitch = useCallback(
+    (targetLabel: string, action: () => void) => {
+      if (!effectiveMaterial.isCustomEdited) {
+        action();
+        return;
+      }
+      setPendingCaseSwitch({
+        label: targetLabel,
+        onConfirm: action,
+      });
+    },
+    [effectiveMaterial.isCustomEdited]
+  );
 
   const handleToggleKytAnswers = useCallback(() => {
     setShowKytAnswers((prev) => !prev);
@@ -511,90 +561,114 @@ export default function App() {
   );
 
   const handleSelectIndustry = (nextIndustry: IndustryType) => {
-    const firstWorkType = INDUSTRY_WORK_TYPES[nextIndustry][0];
-    setIndustry(nextIndustry);
-    setWorkType(firstWorkType);
-    setPinnedCaseId(null);
-    setActiveSlide(0);
+    guardCaseSwitch(`「${nextIndustry}」 추천 사례`, () => {
+      const firstWorkType = INDUSTRY_WORK_TYPES[nextIndustry][0];
+      setIndustry(nextIndustry);
+      setWorkType(firstWorkType);
+      setPinnedCaseId(null);
+      setActiveSlide(0);
 
-    if (isIndustryShardCached(nextIndustry)) {
-      const latestDb = getCachedCasesSnapshot(liveStateRef.current.customCases);
-      if (latestDb !== liveStateRef.current.casesDb) {
-        liveStateRef.current.casesDb = latestDb;
-        setCasesDb(latestDb);
+      if (isIndustryShardCached(nextIndustry)) {
+        const latestDb = getCachedCasesSnapshot(liveStateRef.current.customCases);
+        if (latestDb !== liveStateRef.current.casesDb) {
+          liveStateRef.current.casesDb = latestDb;
+          setCasesDb(latestDb);
+        }
+        runGeneration({
+          db: latestDb,
+          industry: nextIndustry,
+          workType: firstWorkType,
+          pinnedCaseId: null,
+          isRegenerate: false,
+        });
+      } else {
+        setIsShardLoading(true);
       }
-      runGeneration({
-        db: latestDb,
-        industry: nextIndustry,
-        workType: firstWorkType,
-        pinnedCaseId: null,
-        isRegenerate: false,
-      });
-    } else {
-      setIsShardLoading(true);
-    }
+    });
   };
 
   const handleSelectWorkType = (nextWorkType: string) => {
-    setWorkType(nextWorkType);
-    setPinnedCaseId(null);
-    setActiveSlide(0);
-    runGeneration({
-      workType: nextWorkType,
-      pinnedCaseId: null,
-      isRegenerate: false,
+    guardCaseSwitch(`「${nextWorkType}」 추천 사례`, () => {
+      setWorkType(nextWorkType);
+      setPinnedCaseId(null);
+      setActiveSlide(0);
+      runGeneration({
+        workType: nextWorkType,
+        pinnedCaseId: null,
+        isRegenerate: false,
+      });
     });
   };
 
   const handleChangeSourceFilter = (nextTab: SourceFilterTab) => {
-    setSourceFilter(nextTab);
-    setPinnedCaseId(null);
-    setActiveSlide(0);
-    runGeneration({
-      sourceFilter: nextTab,
-      pinnedCaseId: null,
-      isRegenerate: false,
+    const label =
+      nextTab === 'FATALITY' ? '최신 사망속보' : nextTab === 'SIF' ? 'SIF 공식 분석' : '전체 재해사례';
+    guardCaseSwitch(`「${label}」 추천 사례`, () => {
+      setSourceFilter(nextTab);
+      setPinnedCaseId(null);
+      setActiveSlide(0);
+      runGeneration({
+        sourceFilter: nextTab,
+        pinnedCaseId: null,
+        isRegenerate: false,
+      });
     });
   };
 
-  const handlePinCase = (chosenCase: AccidentCase) => {
-    setPinnedCaseId(chosenCase.id);
-    if (chosenCase.industry !== industry) {
-      setIndustry(chosenCase.industry);
+  const handlePinCase = (chosenCase: AccidentCase, onApplied?: () => void) => {
+    if (chosenCase.id === effectiveMaterial.primaryCase.id && pinnedCaseId === chosenCase.id) {
+      onApplied?.();
+      return;
     }
-    if (INDUSTRY_WORK_TYPES[chosenCase.industry].includes(chosenCase.work_type)) {
-      setWorkType(chosenCase.work_type);
+
+    const applyPin = () => {
+      setPinnedCaseId(chosenCase.id);
+      setActiveSlide(0);
+      runGeneration({
+        pinnedCaseId: chosenCase.id,
+        isRegenerate: false,
+      });
+      onApplied?.();
+      showToast(
+        'success',
+        `선택한 사례(${chosenCase.industry} · ${chosenCase.id})로 교육자료를 구성했습니다.`
+      );
+    };
+
+    if (chosenCase.id === effectiveMaterial.primaryCase.id) {
+      applyPin();
+      return;
     }
-    setActiveSlide(0);
-    runGeneration({
-      industry: chosenCase.industry,
-      workType: chosenCase.work_type,
-      pinnedCaseId: chosenCase.id,
-      isRegenerate: false,
-    });
-    showToast('success', `선택한 사례(${chosenCase.id})로 교육자료를 구성했습니다.`);
+
+    guardCaseSwitch(`검색 사례(${chosenCase.title.slice(0, 26)})`, applyPin);
   };
 
   const handleClearPinnedCase = () => {
-    setPinnedCaseId(null);
-    runGeneration({
-      pinnedCaseId: null,
-      isRegenerate: false,
+    guardCaseSwitch(`「${industry} · ${workType}」 추천 사례`, () => {
+      setPinnedCaseId(null);
+      setActiveSlide(0);
+      runGeneration({
+        pinnedCaseId: null,
+        isRegenerate: false,
+      });
+      showToast('success', `기본 추천 사례(${industry} · ${workType})로 전환했습니다.`);
     });
   };
 
   const handleApplyRecommendedCase = (targetIndustry: IndustryType, targetWorkType: string) => {
-    setIndustry(targetIndustry);
-    setWorkType(targetWorkType);
-    setPinnedCaseId(null);
-    setActiveSlide(0);
-    runGeneration({
-      industry: targetIndustry,
-      workType: targetWorkType,
-      pinnedCaseId: null,
-      isRegenerate: false,
+    guardCaseSwitch(`계절 대표 재해(${targetWorkType})`, () => {
+      setIndustry(targetIndustry);
+      setWorkType(targetWorkType);
+      setPinnedCaseId(null);
+      setActiveSlide(0);
+      runGeneration({
+        industry: targetIndustry,
+        workType: targetWorkType,
+        pinnedCaseId: null,
+        isRegenerate: false,
+      });
+      showToast('success', `계절 대표 재해 작업유형(${targetWorkType})을 적용했습니다.`);
     });
-    showToast('success', `계절 대표 재해 작업유형(${targetWorkType})을 적용했습니다.`);
   };
 
   const handleChangeVariation = (nextVariation: VariationOption) => {
@@ -604,6 +678,9 @@ export default function App() {
       isRegenerate: false,
       preservePrimaryCase: true,
     });
+    if (effectiveMaterial.isCustomEdited) {
+      showToast('success', '교육 구성 변주를 적용했습니다. (현장 맞춤 편집한 대책·TBM은 그대로 유지됩니다)');
+    }
   };
 
   const handleUpdateSiteInfo = (patch: Partial<CustomSiteInfo>) => {
@@ -618,30 +695,36 @@ export default function App() {
   };
 
   const handleRegenerate = async () => {
-    regenSeqRef.current += 1;
-    const nonce =
-      Math.floor(Math.random() * 900_000) + 100_000 + regenSeqRef.current * 7919;
+    const executeRegen = async () => {
+      regenSeqRef.current += 1;
+      const nonce =
+        Math.floor(Math.random() * 900_000) + 100_000 + regenSeqRef.current * 7919;
 
-    setPinnedCaseId(null);
+      setPinnedCaseId(null);
 
-    const snap = liveStateRef.current;
-    let activeDb = snap.casesDb;
+      const snap = liveStateRef.current;
+      let activeDb = snap.casesDb;
 
-    // Ensure full industry shard is hydrated before picking a new case if clicked during initial load
-    if (!isIndustryShardCached(snap.industry)) {
-      setIsShardLoading(true);
-      await loadIndustryShard(snap.industry);
-      activeDb = getCachedCasesSnapshot(liveStateRef.current.customCases);
-      liveStateRef.current.casesDb = activeDb;
-      setCasesDb(activeDb);
-      setIsShardLoading(false);
-    }
+      // Ensure full industry shard is hydrated before picking a new case if clicked during initial load
+      if (!isIndustryShardCached(snap.industry)) {
+        setIsShardLoading(true);
+        await loadIndustryShard(snap.industry);
+        activeDb = getCachedCasesSnapshot(liveStateRef.current.customCases);
+        liveStateRef.current.casesDb = activeDb;
+        setCasesDb(activeDb);
+        setIsShardLoading(false);
+      }
 
-    runGeneration({
-      db: activeDb,
-      pinnedCaseId: null,
-      isRegenerate: true,
-      regenNonce: nonce,
+      runGeneration({
+        db: activeDb,
+        pinnedCaseId: null,
+        isRegenerate: true,
+        regenNonce: nonce,
+      });
+    };
+
+    guardCaseSwitch('다른 추천 사례', () => {
+      void executeRegen();
     });
   };
 
@@ -1060,7 +1143,8 @@ export default function App() {
     mobileEditSheet.open ||
     legalDrawerOpen ||
     Boolean(fallbackImageState) ||
-    fullOverviewModalOpen;
+    fullOverviewModalOpen ||
+    Boolean(pendingCaseSwitch);
 
   const showPage2 = siteInfo.showPage2Appendix && Boolean(resolvedLegalRef);
   const mobileActivePage2 = isMobileViewport && outputFormat === 'ops' && showPage2 && mobileOpsPage === 'page2';
@@ -1084,9 +1168,13 @@ export default function App() {
           >
             {sourceBrand.shortLabel}
           </span>
-          <span className="font-medium text-slate-400 whitespace-nowrap">{industry}</span>
+          <span className="font-medium text-slate-400 whitespace-nowrap">
+            {effectiveMaterial.selectedIndustry}
+          </span>
           <span className="text-slate-600" aria-hidden="true">/</span>
-          <span className="font-semibold text-white truncate">{workType}</span>
+          <span className="font-semibold text-white truncate">
+            {effectiveMaterial.selectedWorkType}
+          </span>
           <span className="text-slate-600" aria-hidden="true">/</span>
           <span className="text-slate-300 whitespace-nowrap">{formatBreadcrumbLabel}</span>
         </div>
@@ -1246,6 +1334,7 @@ export default function App() {
           workType={workType}
           sourceFilter={sourceFilter}
           pinnedCaseId={pinnedCaseId}
+          activeCase={effectiveMaterial.primaryCase}
           activeCaseId={effectiveMaterial.primaryCase.id}
           outputFormat={outputFormat}
           variationOption={variationOption}
@@ -1253,6 +1342,7 @@ export default function App() {
           casesPool={casesDb}
           metaSummary={metaSummary}
           isShardLoading={isShardLoading}
+          isSearchShardsLoading={isSearchShardsLoading}
           totalDbCount={totalDbCount}
           customDbCount={customCases.length}
           measurePresets={measurePresets}
@@ -1262,6 +1352,7 @@ export default function App() {
           onPinCase={handlePinCase}
           onClearPinnedCase={handleClearPinnedCase}
           onApplyRecommendedCase={handleApplyRecommendedCase}
+          onEnsureAllShardsLoaded={ensureAllShardsLoaded}
           onChangeOutputFormat={setOutputFormat}
           onChangeVariation={handleChangeVariation}
           onUpdateSiteInfo={handleUpdateSiteInfo}
@@ -1411,7 +1502,7 @@ export default function App() {
                   {sourceBrand.shortLabel}
                 </span>
                 <span className="text-[12px] font-bold text-slate-800 truncate">
-                  {industry} · {workType}
+                  {effectiveMaterial.selectedIndustry} · {effectiveMaterial.selectedWorkType}
                 </span>
               </div>
               {effectiveMaterial.isCustomEdited && (
@@ -1747,6 +1838,73 @@ export default function App() {
                   <strong className="text-slate-800">출처:</strong> {getDisplaySourceRef(effectiveMaterial.primaryCase)}
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* In-app Confirmation Guard when switching away from a custom-edited case */}
+      {pendingCaseSwitch && (
+        <div
+          data-export-hide="true"
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 backdrop-blur-[1px] p-4"
+          onClick={() => setPendingCaseSwitch(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setPendingCaseSwitch(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="현장 맞춤 편집 내용 확인"
+            className="w-full max-w-[420px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle className="w-4 h-4 text-orange-400 shrink-0" />
+                <h2 className="text-[14px] font-extrabold truncate">현장 맞춤 편집 사례 전환 확인</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingCaseSwitch(null)}
+                aria-label="전환 확인 닫기"
+                className="min-w-[36px] min-h-[36px] rounded-lg text-slate-300 hover:text-white flex items-center justify-center shrink-0 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2.5 text-[13px] text-slate-700 leading-relaxed keep-all">
+              <p className="font-semibold text-slate-900">
+                현재 사례(<span className="font-mono text-[12px]">{effectiveMaterial.primaryCase.id}</span>)의
+                예방대책 또는 TBM 점검표가 현장 맞춤 편집되어 있습니다.
+              </p>
+              <p>
+                <strong className="text-slate-950">{pendingCaseSwitch.label}</strong>(으)로 전환하시겠습니까?
+              </p>
+              <p className="text-[11.5px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                현재 세션 동안 이 사례의 편집 내용은 임시 보관되며, 새로고침 전 같은 사례를 다시 선택하면 그대로 복원됩니다.
+              </p>
+            </div>
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setPendingCaseSwitch(null)}
+                className="min-h-[42px] px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-[12.5px] font-bold cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const confirmFn = pendingCaseSwitch.onConfirm;
+                  setPendingCaseSwitch(null);
+                  confirmFn();
+                }}
+                className="min-h-[42px] px-4 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-[12.5px] font-extrabold cursor-pointer"
+              >
+                계속 전환
+              </button>
             </div>
           </div>
         </div>

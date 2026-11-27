@@ -709,10 +709,10 @@ export function generateEducationMaterial(params: {
   let chosen: ScoredCase;
 
   if (pinnedMatch) {
-    const sc = scoreCaseMatch(pinnedMatch, industry, workType);
+    const sc = scoreCaseMatch(pinnedMatch, pinnedMatch.industry, pinnedMatch.work_type);
     chosen = {
       ...sc,
-      isExact: sc.isExact || pinnedMatch.industry === industry,
+      isExact: true,
       reason: '사용자 직접 검색·선택 고정 사례',
     };
   } else if (preservedValidForSource && preservedItem) {
@@ -818,8 +818,8 @@ export function generateEducationMaterial(params: {
 
   const material: GeneratedMaterial = {
     version: nextVersion,
-    selectedIndustry: industry,
-    selectedWorkType: workType,
+    selectedIndustry: pinnedMatch ? chosen.item.industry : industry,
+    selectedWorkType: pinnedMatch ? chosen.item.work_type : workType,
     primaryCase: chosen.item,
     relatedCase,
     isExactMatch: chosen.isExact,
